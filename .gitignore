@@ -2,6 +2,12 @@
 __pycache__/
 *.pyc
 data/*.db
+__pycache__/
+*.py[cod]
+.coverage
+htmlcov/
+artifacts/
+backups/
 data/uploads/*
 !data/uploads/.gitkeep
 *.log
