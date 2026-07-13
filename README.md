@@ -4,8 +4,8 @@
 
 Open-source public-infrastructure evidence and implementation-integrity engine for India.
 
-**Release planning date:** 12 July 2026 (Asia/Kolkata)  
-**Repository status:** production-oriented reference implementation and 72-hour execution package.  
+**Release planning date:** 12 July 2026 (Asia/Kolkata)
+**Repository status:** hardened public-beta reference implementation. Code-level gates are green; operator/environment production gates remain explicitly blocked in `docs/IMPLEMENTATION_AUDIT.md`.
 **Licence:** Apache-2.0.
 
 ## Honest scope
@@ -15,15 +15,17 @@ Project X-Ray does **not** determine whether a person or organization is corrupt
 ## What works in this package
 
 - Create and list public-infrastructure projects.
-- Add source-linked claims with explicit evidence states.
-- Register document/evidence records with SHA-256 hashes.
+- Add source-linked candidate claims with explicit evidence states.
+- Require two distinct reviewers before claim publication and after corrections.
+- Register document/evidence records with SHA-256 hashes and quarantine state.
 - Record missing required documents.
 - Publish authority responses beside allegations.
 - Generate a downloadable evidence report and draft RTI request.
 - SQLite persistence and database initialization.
 - JSON API and responsive public dashboard.
-- Security headers, upload limits, audit events, health/readiness endpoints.
-- Unit tests, release checks, Docker image and CI templates.
+- Security headers, body/rate limits, hash-chained immutable audit events, health/readiness endpoints.
+- Tested restart persistence, backup/restore, legacy migration and end-to-end smoke path.
+- Unit tests, release checks, reproducible SBOM/checksums, Docker image and CI templates.
 
 ## Quick start
 
@@ -38,6 +40,7 @@ Run tests:
 ```bash
 python3 -m unittest discover -s tests -v
 python3 scripts/check_release.py
+python3 scripts/smoke_e2e.py
 ```
 
 Run with Docker:
