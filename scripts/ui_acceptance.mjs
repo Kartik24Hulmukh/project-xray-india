@@ -106,7 +106,11 @@ async function run() {
   const { child, stderrRef } = await startServer();
   try {
     const projectId = await seedData();
-    const browser = await chromium.launch({ headless: true, executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium' });
+    const launchOpts = { headless: true };
+    if (process.env.CHROMIUM_PATH) {
+      launchOpts.executablePath = process.env.CHROMIUM_PATH;
+    }
+    const browser = await chromium.launch(launchOpts);
     const context = await browser.newContext();
     await context.tracing.start({ screenshots: true, snapshots: true });
     const page = await context.newPage();
