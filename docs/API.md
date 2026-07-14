@@ -8,6 +8,7 @@ All write requests use `Content-Type: application/json`. Development/test deploy
 - `GET /api/projects/{project_id}` — public fields and public claim states only
 - `GET /api/projects/{project_id}/report`
 - `GET /api/projects/{project_id}/rti`
+- `GET /api/projects/{project_id}/capsule` — deterministic evidence capsule with a stable SHA-256 digest and envelope list for offline verification.
 
 ## Admin writes
 1. `POST /api/projects`

@@ -8,7 +8,8 @@
 - Added optional proxy-aware client identification via `TRUST_PROXY_HEADERS=1` for trusted reverse-proxy deployments.
 - Expanded Prometheus metrics for rate-limit, idempotency replay/conflict, and quarantine-block visibility.
 - Updated the security workflow to use the MIT-licensed gitleaks CLI directly instead of the licensed GitHub action.
-- Automated verification now covers 25 tests, smoke path, release checks, and repeat loop runs.
+- Automated verification now covers 26 tests, browser acceptance, smoke path, release checks, and repeat loop runs.
+- Added downloadable evidence capsules plus `scripts/verify_capsule.py` for offline public-verification flows.
 
 ## v0.3.0 — transactional production hardening
 

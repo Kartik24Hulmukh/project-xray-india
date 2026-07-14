@@ -1,6 +1,7 @@
 import json
 import os
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import threading
@@ -156,6 +157,29 @@ class TestCore(unittest.TestCase):
         self.assertEqual(self.req('/api/projects/' + pid)[0], 404)
         self.assertFalse(any(x['id'] == pid for x in self.req('/api/projects')[1]['projects']))
         self.assertEqual(self.req('/api/projects/' + pid + '?include_private=1', token='review-token-a')[0], 200)
+
+    def test_capsule_export_and_verifier(self):
+        pid, src, cid = self.create_project_source_claim()
+        doc = {'source_id': src, 'filename': 'capsule.pdf', 'media_type': 'application/pdf', 'size_bytes': 128, 'sha256': 'f' * 64}
+        did = self.req(f'/api/projects/{pid}/documents', 'POST', doc, 'test-admin-secret-long-enough')[1]['id']
+        self.req(f'/api/projects/{pid}/documents/{did}/scan', 'POST', {'result': 'clean'}, 'scan-token-a')
+        self.publish_claim(pid, cid)
+        self.req(f'/api/projects/{pid}/publish', 'POST', {}, 'test-admin-secret-long-enough')
+        status, capsule, _ = self.req(f'/api/projects/{pid}/capsule')
+        self.assertEqual(status, 200)
+        self.assertEqual(capsule['kind'], 'project_xray_public_dossier_capsule')
+        self.assertEqual(len(capsule['claims']), 1)
+        self.assertEqual(len(capsule['evidence_envelopes']), 1)
+        with tempfile.NamedTemporaryFile('w+', suffix='.json', delete=False) as handle:
+            json.dump(capsule, handle)
+            path = handle.name
+        try:
+            verified = subprocess.run([sys.executable, 'scripts/verify_capsule.py', path], cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True, check=True)
+            payload = json.loads(verified.stdout)
+            self.assertEqual(payload['status'], 'ok')
+            self.assertEqual(payload['claims'], 1)
+        finally:
+            os.unlink(path)
 
     def test_public_projection_allowlist_blocks_private_fields(self):
         pid, src, cid = self.create_project_source_claim()

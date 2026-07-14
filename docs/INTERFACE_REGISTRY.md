@@ -1,13 +1,27 @@
 # Interface registry
 
-This registry is the integration contract for the synthetic alpha. Changes to database migrations, API contracts, evidence-state rules, or public projections require an ADR and contract tests.
+## Public dossier exports
 
-| Boundary | Owner | Contract |
-| --- | --- | --- |
-| API and evidence policy | Integration | FastAPI/Pydantic request and response models under `/api/v1` |
-| Persistence | Domain | Alembic migrations; PostgreSQL is the deployment target; SQLite is test-only |
-| Object storage | Ingestion | Quarantine, private-original, and public-redacted namespaces; originals are never public |
-| Extraction worker | Ingestion | Receives one quarantined object and writes candidate-only results; no publication permission |
-| Public projection | Publication | Explicit allowlisted `PublicDossier` response; no raw ORM serialization |
-| Identity and reviews | Security | OIDC roles and independent two-reviewer publication check |
-| Exports | Publication | Redacted evidence report, editable RTI draft, and checksum-backed dossier capsule |
+### `GET /api/projects/{project_id}`
+Allowlisted public dossier projection containing only public project, claim, response and gap fields.
+
+### `GET /api/projects/{project_id}/report`
+Markdown evidence report for the public dossier.
+
+### `GET /api/projects/{project_id}/rti`
+Draft RTI export for the public dossier.
+
+### `GET /api/projects/{project_id}/capsule`
+Deterministic JSON evidence capsule for the public dossier.
+
+The capsule includes:
+- allowlisted public dossier fields
+- evidence envelopes derived from published claims
+- deterministic `capsule_sha256`
+- methodology statements for verification and non-overclaim boundaries
+
+Verify downloaded capsules with:
+
+```bash
+python3 scripts/verify_capsule.py capsule.json
+```

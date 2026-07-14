@@ -15,4 +15,6 @@ for raw in tracked:
 compile_result=subprocess.run([sys.executable,'-m','compileall','-q','app','scripts','tests'],cwd=root)
 if compile_result.returncode:sys.exit(compile_result.returncode)
 tests=subprocess.run([sys.executable,'-m','unittest','discover','-s',str(root/'tests'),'-v'],cwd=root)
-sys.exit(tests.returncode)
+if tests.returncode:sys.exit(tests.returncode)
+ui=subprocess.run(['node','scripts/ui_acceptance.mjs'],cwd=root)
+sys.exit(ui.returncode)

@@ -31,7 +31,8 @@ Project X-Ray does **not** determine whether a person or organization is corrupt
 - Fail-closed document quarantine with a separate scanner role.
 - Signed managed-storage verification, monitoring webhooks and recovery evidence.
 - Authenticated backup manifests, atomic migrations and restart/restore smoke path.
-- Unit tests, release checks, reproducible SBOM/checksums, Docker image and CI templates.
+- Unit tests, browser acceptance checks, release checks, reproducible SBOM/checksums, Docker image and CI templates.
+- Downloadable evidence capsules with deterministic hashes and a local verifier CLI.
 
 ## Quick start
 
@@ -47,6 +48,7 @@ Run tests:
 python3 -m unittest discover -s tests -v
 python3 scripts/check_release.py
 python3 scripts/smoke_e2e.py
+python3 scripts/verify_capsule.py capsule.json
 # Production contract and required evidence:
 # docs/PRODUCTION_DEPLOYMENT.md
 ```

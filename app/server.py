@@ -303,6 +303,72 @@ def bundle(pid, private=False):
         }
 
 
+def stable_json_bytes(value):
+    return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(',', ':')).encode()
+
+
+def source_class_for_envelope(value):
+    mapping = {
+        'official': 'primary_official_record',
+        'official_statement': 'official_statement',
+        'independent': 'independent_technical',
+        'reporting': 'reputable_reporting',
+        'submission': 'public_submission',
+    }
+    return mapping.get((value or '').strip(), 'primary_official_record')
+
+
+def anchor_from_claim(claim):
+    page_ref = claim.get('page_ref') or ''
+    match = re.search(r'(\d+)', page_ref)
+    page = int(match.group(1)) if match else 1
+    text = claim.get('passage') or page_ref or claim.get('text', '')[:400]
+    return {'page': page, 'text': text}
+
+
+def evidence_envelope_from_claim(claim):
+    return {
+        'id': 'ev_' + claim['id'],
+        'artifact_sha256': claim['source_sha256'],
+        'retrieved_at': claim['retrieved_at'],
+        'source': {
+            'url': claim['source_url'],
+            'publisher': claim['publisher'] or claim['source_url'],
+            'source_class': source_class_for_envelope(claim.get('source_class')),
+        },
+        'derivation': {
+            'kind': 'snapshot',
+            'tool': 'project-xray',
+            'version': '0.4.0',
+            'parent_sha256': None,
+        },
+        'anchors': [anchor_from_claim(claim)],
+        'warnings': ['Public capsule: review conclusions remain subject to human verification.'],
+    }
+
+
+def dossier_capsule(bundle_data):
+    claim_rows = bundle_data['claims']
+    envelopes = [evidence_envelope_from_claim(claim) for claim in claim_rows]
+    capsule = {
+        'schema_version': '1',
+        'kind': 'project_xray_public_dossier_capsule',
+        'generated_at': now(),
+        'project': bundle_data['project'],
+        'claims': claim_rows,
+        'gaps': bundle_data['gaps'],
+        'responses': bundle_data['responses'],
+        'evidence_envelopes': envelopes,
+        'methodology': {
+            'two_person_review_required': True,
+            'unsupported_absence_rule': 'Not located means not located in searched sources, not proof of non-existence.',
+            'risk_indicator_rule': 'Risk indicators do not prove corruption and require human review.',
+        },
+    }
+    capsule['capsule_sha256'] = hashlib.sha256(stable_json_bytes(capsule)).hexdigest()
+    return capsule
+
+
 def strict_json(raw):
     def pairs(values):
         out = {}
@@ -580,6 +646,8 @@ class H(BaseHTTPRequestHandler):
                 return self.text(
                     f"Draft RTI request — not legal advice\n\nTo: Public Information Officer, {project['authority']}\nSubject: Records concerning {project['title']}\n\nPlease provide:\n{items}\n"
                 )
+            if len(segments) == 4 and segments[3] == 'capsule':
+                return self.out(dossier_capsule(dossier))
             if len(segments) == 4 and segments[3] == 'audit':
                 if not self.principal(('admin', 'reviewer')):
                     return
