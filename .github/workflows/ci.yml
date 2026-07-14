@@ -57,21 +57,5 @@ jobs:
           cur.close(); conn.close()
           print('schema applied')
           PY
-      - name: Run PostgreSQL-aware unit tests
-        run: |
-          # Compatibility tests + recovery path under DATABASE_URL
-          python3 -m unittest tests.test_postgres_compat -v
-      - name: Live abstraction smoke against Postgres
-        run: |
-          python3 - <<'PY'
-          import os
-          from app.database import IS_POSTGRES, connect, table_exists, get_schema_version, integrity_check
-          assert IS_POSTGRES, 'expected postgres mode'
-          c = connect()
-          try:
-            assert table_exists(c, 'projects'), 'projects missing'
-            assert integrity_check(c) == 'ok'
-            print({'backend':'postgres','schema_version':get_schema_version(c),'integrity':integrity_check(c)})
-          finally:
-            c.close()
-          PY
+      - name: Live abstraction and integrity smoke
+        run: python3 -m unittest tests.test_postgres_live -v
