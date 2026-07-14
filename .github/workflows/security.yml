@@ -27,7 +27,7 @@ jobs:
           curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION#v}_linux_x64.tar.gz" -o /tmp/gitleaks.tar.gz
           tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
           chmod +x /tmp/gitleaks
-          /tmp/gitleaks detect --source . --verbose --redact --no-banner
+          /tmp/gitleaks detect --source . --config .gitleaks.toml --verbose --redact --no-banner
       - name: Generate Python SBOM
         uses: anchore/sbom-action@v0
         with:

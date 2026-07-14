@@ -1,0 +1,17 @@
+title = "Project X-Ray India gitleaks config"
+
+[allowlist]
+description = "Allowlisted paths for example/template/test files"
+paths = [
+    '''\.env\.production\.example$''',
+    '''\.env\.example$''',
+    '''docker-compose\.prod\.yml$''',
+    '''docker-compose\.yml$''',
+    '''tests/.*\.py$''',
+    '''scripts/.*\.py$''',
+    '''scripts/.*\.mjs$''',
+    '''AUDIT_REPORT\.md$''',
+    '''docs/.*\.md$''',
+    '''\.gitleaksignore$''',
+    '''\.gitleaks\.toml$''',
+]

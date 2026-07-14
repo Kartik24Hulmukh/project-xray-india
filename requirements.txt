@@ -1,0 +1,9 @@
+# Project X-Ray India — Python dependencies
+# SQLite mode: no third-party packages required (pure stdlib)
+# PostgreSQL mode: psycopg2-binary is required
+
+# PostgreSQL driver (only needed when DATABASE_URL is set)
+psycopg2-binary>=2.9,<3
+
+# Development / testing (optional)
+# pytest>=8.0  # Alternative test runner, not required (unittest is used)
