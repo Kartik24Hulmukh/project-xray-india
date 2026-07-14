@@ -149,17 +149,16 @@ def init():
             raise RuntimeError('production configuration missing/unsafe: ' + ','.join(missing))
 
     with db(True) as c:
-        if not IS_POSTGRES:
-            legacy = c.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='sources'"
-            ).fetchone()
-            if legacy and get_schema_version(c) not in (0, 3):
-                raise RuntimeError('database migration required; run scripts/migrate_v2_to_v3.py')
-            c.executescript((ROOT / 'db/schema.sql').read_text())
-        else:
-            # PostgreSQL: load the PostgreSQL schema
+        if table_exists(c, 'sources') and get_schema_version(c) not in (0, 3):
+            raise RuntimeError(
+                'database migration required; run scripts/migrate_v2_to_v3.py '
+                '(SQLite-only legacy path) or apply operator-managed PostgreSQL migrations'
+            )
+        if IS_POSTGRES:
             schema_path = ROOT / 'db/schema_postgres.sql'
             c.executescript(schema_path.read_text())
+        else:
+            c.executescript((ROOT / 'db/schema.sql').read_text())
         ttl = int(os.getenv('BOOTSTRAP_TOKEN_TTL_SECONDS', '86400'))
         bootstrap(c, 'admin', 'admin', ADMIN_TOKEN, ttl)
         for principal, secret in REVIEWER_TOKENS.items():
@@ -341,7 +340,7 @@ def evidence_envelope_from_claim(claim):
         'derivation': {
             'kind': 'snapshot',
             'tool': 'project-xray',
-            'version': '0.4.0',
+            'version': '0.4.1',
             'parent_sha256': None,
         },
         'anchors': [anchor_from_claim(claim)],
@@ -565,7 +564,7 @@ class H(BaseHTTPRequestHandler):
             return self.out({'error': 'rate limit exceeded'}, 429)
 
         if path == '/health':
-            return self.out({'status': 'ok', 'time': now(), 'version': '0.4.0'})
+            return self.out({'status': 'ok', 'time': now(), 'version': '0.4.1'})
         if path == '/ready':
             try:
                 with db() as c:
@@ -1093,5 +1092,5 @@ class H(BaseHTTPRequestHandler):
 
 if __name__ == '__main__':
     init()
-    print(json.dumps({'event': 'startup', 'service': 'project-xray', 'version': '0.4.0', 'port': PORT, 'environment': ENV}))
+    print(json.dumps({'event': 'startup', 'service': 'project-xray', 'version': '0.4.1', 'port': PORT, 'environment': ENV}))
     ThreadingHTTPServer(('0.0.0.0', PORT), H).serve_forever()

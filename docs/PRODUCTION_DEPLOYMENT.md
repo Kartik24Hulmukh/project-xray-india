@@ -49,3 +49,12 @@ The monitoring delivery path is `POST /api/operations/test-alert` as an authenti
 ## Remaining operator evidence
 
 Source code cannot prove a real IdP tenant enforces MFA, an object bucket is encrypted, an alert reached an on-call human, or a target-environment RPO/RTO drill passed. Record those receipts in `ops/production-readiness.yaml`; do not label the deployment production before they exist.
+
+## Database backend notes (v0.4.1)
+
+- **SQLite** remains the default local/dev path (`DB_PATH`).
+- **PostgreSQL** is selected when `DATABASE_URL` is set. Apply `db/schema_postgres.sql` with operator-managed migration tooling before first boot.
+- `scripts/migrate_legacy.py` and `scripts/migrate_v2_to_v3.py` are **SQLite file rewriters only**. They exit with an error if `DATABASE_URL` is set.
+- Runtime recovery for both backends is via `scripts/recovery.py` (requires `pg_dump`/`pg_restore` for PostgreSQL).
+- CI runs a PostgreSQL service-container job for abstraction/schema smoke; a target-environment restore drill is still an operator gate.
+

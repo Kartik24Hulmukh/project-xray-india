@@ -558,7 +558,7 @@ Static files are read entirely into memory with `read_bytes()`. Fine for current
 ### Critical (0)
 None.
 
-### High (2) — down from 5 after sibling work
+### High (2) — down from 5 after sibling work; both addressed in v0.4.1 consistency pass (requirements.txt present; migration scripts now explicitly SQLite-only with DATABASE_URL refuse)
 1. **`psycopg2` dependency undeclared** — no `requirements.txt` or `pyproject.toml` exists; PostgreSQL mode will fail without manual install
 2. **Migration scripts still SQLite-only** — `scripts/migrate_v2_to_v3.py` uses `PRAGMA`, `sqlite3.backup()`, f-string DDL; no PostgreSQL migration path
 

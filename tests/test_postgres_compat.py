@@ -12,6 +12,17 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+
+# Offline dialect/unit tests — they reload modules and mock drivers.
+# Live DATABASE_URL coverage lives in tests/test_postgres_live.py and CI service job.
+OFFLINE_ONLY = not bool(os.getenv('DATABASE_URL'))
+
+def setUpModule():
+    if not OFFLINE_ONLY:
+        raise unittest.SkipTest(
+            'test_postgres_compat is offline-only; use test_postgres_live under DATABASE_URL'
+        )
+
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 

@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
+"""SQLite-only migrator (schema v2 -> v3).
+
+PostgreSQL production deployments must use operator-managed migrations against
+db/schema_postgres.sql. This script only rewrites local SQLite database files.
+"""
 import argparse,json,os,sqlite3,sys
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT));SCHEMA=(ROOT/'db/schema.sql').read_text()
 from app.manifest import create as create_manifest
 from app.audit import event_hash,checkpoint_signature
+if os.getenv('DATABASE_URL'):
+    raise SystemExit(json.dumps({'status':'error','error':'migrate_v2_to_v3.py is SQLite-only; unset DATABASE_URL and pass a .db path'}))
 
 def migrate(path,backup_key=None,audit_key=None):
  path=Path(path);backup_key=backup_key or os.getenv('BACKUP_HMAC_KEY','development-backup-key-not-for-production');audit_key=audit_key or os.getenv('AUDIT_HMAC_KEY','development-audit-key-not-for-production');backup=path.with_suffix(path.suffix+'.pre-v3.bak');manifest=backup.with_suffix(backup.suffix+'.manifest.json');tmp=path.with_suffix(path.suffix+'.v3.tmp')

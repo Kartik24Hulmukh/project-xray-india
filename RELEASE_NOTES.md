@@ -1,5 +1,15 @@
 # Release notes
 
+## v0.4.1 — production-consistency and PostgreSQL path hardening
+
+- Aligned package/runtime/SBOM version strings to **0.4.1**.
+- Clarified that `scripts/migrate_legacy.py` and `scripts/migrate_v2_to_v3.py` are **SQLite-only** and refuse `DATABASE_URL`.
+- Hardened `scripts/recovery.py` / `scripts/recovery_evidence.py` / `scripts/verify_audit.py` for dual SQLite + PostgreSQL backends via the shared abstraction.
+- Replaced remaining `sqlite_master` checks in server init with `table_exists()`.
+- Added a CI PostgreSQL service-container job that applies `db/schema_postgres.sql` and runs live abstraction smoke checks.
+- Documented external production blockers honestly; no fabricated staging/OIDC/storage evidence.
+
+
 ## v0.4.0 — public projection and abuse-control hardening
 
 - Added an explicit allowlisted public dossier projection so anonymous reads cannot leak reviewer-only or quarantine/internal fields.

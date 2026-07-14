@@ -1,8 +1,16 @@
 #!/usr/bin/env python3
+"""SQLite-only legacy migrator (v1 -> v2 schema).
+
+This tool rewrites on-disk SQLite files. It intentionally does NOT support
+DATABASE_URL / PostgreSQL. Greenfield PostgreSQL deployments should apply
+db/schema_postgres.sql via operator-managed migration tooling instead.
+"""
 import argparse,hashlib,json,shutil,sqlite3,sys,uuid,os
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT));SCHEMA=(ROOT/'db/schema.sql').read_text()
 from app.manifest import create as create_manifest
+if os.getenv('DATABASE_URL'):
+    raise SystemExit(json.dumps({'status':'error','error':'migrate_legacy.py is SQLite-only; unset DATABASE_URL and pass a .db path'}))
 def uid(p):return p+'_'+uuid.uuid4().hex[:16]
 def migrate(path):
  path=Path(path);backup=path.with_suffix(path.suffix+'.pre-v2.bak');tmp=path.with_suffix(path.suffix+'.v2.tmp')

@@ -10,7 +10,52 @@ jobs:
         with: {python-version: '3.13'}
       - uses: actions/setup-node@v4
         with: {node-version: '20'}
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
       - run: npm install
       - run: npx playwright install --with-deps chromium
       - run: python3 scripts/check_release.py
       - run: python3 scripts/smoke_e2e.py
+
+  postgres-compat:
+    name: PostgreSQL integration (service container)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: xray
+          POSTGRES_PASSWORD: xray_ci_password
+          POSTGRES_DB: xray_ci
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U xray -d xray_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://xray:xray_ci_password@localhost:5432/xray_ci
+      DB_POOL_MAX: '5'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.13'}
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+      - name: Apply PostgreSQL schema
+        run: |
+          python3 - <<'PY'
+          import os
+          import psycopg2
+          from pathlib import Path
+          url = os.environ['DATABASE_URL']
+          schema = Path('db/schema_postgres.sql').read_text()
+          conn = psycopg2.connect(url)
+          conn.autocommit = True
+          cur = conn.cursor()
+          cur.execute(schema)
+          cur.close(); conn.close()
+          print('schema applied')
+          PY
+      - name: Live abstraction and integrity smoke
+        run: python3 -m unittest tests.test_postgres_live -v

@@ -5,7 +5,8 @@
 Open-source public-infrastructure evidence and implementation-integrity engine for India.
 
 **Release planning date:** 12 July 2026 (Asia/Kolkata)
-**Repository status:** hardened public-beta reference implementation. Code-level gates are green; operator/environment production gates remain explicitly blocked in `docs/IMPLEMENTATION_AUDIT.md`.
+**Release:** v0.4.1 (production-capable public beta).
+**Repository status:** hardened public-beta reference implementation. Code-level gates are green; operator/environment production gates remain explicitly blocked in `docs/IMPLEMENTATION_AUDIT.md` and `docs/PRODUCTION_DEPLOYMENT.md`.
 **Licence:** Apache-2.0.
 
 ## Honest scope
@@ -38,6 +39,8 @@ Project X-Ray does **not** determine whether a person or organization is corrupt
 
 ```bash
 cp .env.example .env
+# Optional PostgreSQL: set DATABASE_URL=postgresql://...
+# and apply db/schema_postgres.sql before first start.
 python3 app/server.py
 # open http://localhost:8080
 ```
