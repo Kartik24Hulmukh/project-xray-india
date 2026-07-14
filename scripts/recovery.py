@@ -117,13 +117,26 @@ def backup(source, destination, key=None, audit_key=None):
         url = os.getenv('DATABASE_URL', '')
         if not url:
             raise RuntimeError('DATABASE_URL is required for PostgreSQL backup')
+        # Parse DATABASE_URL into host/port/db/user components to avoid
+        # passing credentials on the command line (visible in ps aux).
+        parsed = urlparse(url)
+        pg_host = parsed.hostname or 'localhost'
+        pg_port = str(parsed.port or 5432)
+        pg_db = parsed.path.lstrip('/')
+        pg_user = parsed.username or ''
         result = subprocess.run(
-            ['pg_dump', url, '--format=custom', f'--file={tmp}'],
+            ['pg_dump', '--host', pg_host, '--port', pg_port,
+             '--username', pg_user, '--format=custom',
+             f'--file={tmp}', pg_db],
             capture_output=True,
             env=_pg_env(),
         )
         if result.returncode:
-            raise RuntimeError(f'pg_dump failed: {result.stderr.decode()}')
+            stderr = result.stderr.decode()
+            # Redact any accidental credential echo from pg_dump
+            if parsed.password:
+                stderr = stderr.replace(parsed.password, '***REDACTED***')
+            raise RuntimeError(f'pg_dump failed: {stderr}')
         checks = integrity(None, audit_key)
         os.chmod(tmp, 0o600)
         tmp.replace(destination)
@@ -152,25 +165,33 @@ def restore(source, destination, force=False, key=None, audit_key=None, manifest
     key = key or os.getenv('BACKUP_HMAC_KEY', 'development-backup-key-not-for-production')
     audit_key = audit_key or os.getenv('AUDIT_HMAC_KEY', 'development-audit-key-not-for-production')
     source = Path(source)
-    destination = Path(destination)
     manifest = Path(manifest) if manifest else source.with_suffix(source.suffix + '.manifest.json')
-    verify_manifest(manifest, source, key)
 
     if IS_POSTGRES:
         url = os.getenv('DATABASE_URL', '')
         if not url:
             raise RuntimeError('DATABASE_URL is required for PostgreSQL restore')
+        parsed = urlparse(url)
+        pg_host = parsed.hostname or 'localhost'
+        pg_port = str(parsed.port or 5432)
+        pg_db = parsed.path.lstrip('/')
+        pg_user = parsed.username or ''
         result = subprocess.run(
-            ['pg_restore', f'--dbname={url}', '--clean', '--if-exists', str(source)],
+            ['pg_restore', '--host', pg_host, '--port', pg_port,
+             '--username', pg_user, '--clean', '--if-exists',
+             '--dbname', pg_db, str(source)],
             capture_output=True,
             env=_pg_env(),
         )
         if result.returncode:
+            stderr = result.stderr.decode()
+            if parsed.password:
+                stderr = stderr.replace(parsed.password, '***REDACTED***')
             # pg_restore can return non-zero for non-fatal notices; re-check integrity
             try:
                 restored = integrity(None, audit_key)
             except Exception as e:
-                raise RuntimeError(f'pg_restore failed: {result.stderr.decode()} ({e})')
+                raise RuntimeError(f'pg_restore failed: {stderr} ({e})')
         else:
             restored = integrity(None, audit_key)
         return {
@@ -179,6 +200,10 @@ def restore(source, destination, force=False, key=None, audit_key=None, manifest
             'sha256': file_sha256(source),
             **restored,
         }
+
+    # SQLite path
+    destination = Path(destination)
+    verify_manifest(manifest, source, key)
 
     source_checks = integrity(source, audit_key)
     if destination.exists() and not force:

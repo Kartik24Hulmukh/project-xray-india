@@ -1,0 +1,15 @@
+.git
+node_modules
+__pycache__
+*.pyc
+.env
+.env.*
+!.env.example
+!.env.production.example
+data/uploads/*
+data/*.db
+data/*.db.*
+artifacts/
+receipts/
+*.log
+.DS_Store
