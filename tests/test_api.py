@@ -80,6 +80,14 @@ class TestCore(unittest.TestCase):
   self.assertEqual(server.auth({'Authorization':'Bearer '+old_token}),(None,None));self.assertEqual(server.auth({'Authorization':'Bearer '+rotated['token']}),('reviewer','temporary-reviewer'))
   with server.db(True) as c:c.execute("UPDATE auth_tokens SET expires_at='2000-01-01T00:00:00+00:00' WHERE id=?",(rotated['id'],))
   self.assertEqual(server.auth({'Authorization':'Bearer '+rotated['token']}),(None,None))
+ def test_explicit_token_revocation_endpoint(self):
+  created=self.req('/api/auth/tokens','POST',{'principal':'temp-scanner','role':'scanner','ttl_seconds':600},'test-admin-secret-long-enough')[1];tok=created['token'];tid=created['id']
+  self.assertEqual(server.auth({'Authorization':'Bearer '+tok}),('scanner','temp-scanner'))
+  s,r,_=self.req(f'/api/auth/tokens/{tid}/revoke','POST',{},'test-admin-secret-long-enough')
+  self.assertEqual(s,200);self.assertTrue(r['revoked'])
+  self.assertEqual(server.auth({'Authorization':'Bearer '+tok}),(None,None))
+  s2,r2,_=self.req(f'/api/auth/tokens/{tid}/revoke','POST',{},'test-admin-secret-long-enough')
+  self.assertEqual(s2,404)
  def test_concurrent_publication_is_single_transition(self):
   pid,_,cid=self.create_project_source_claim();self.req(f'/api/projects/{pid}/claims/{cid}/reviews','POST',{'decision':'approve'},'review-token-a');self.req(f'/api/projects/{pid}/claims/{cid}/reviews','POST',{'decision':'approve'},'review-token-b')
   with ThreadPoolExecutor(max_workers=8) as pool:results=list(pool.map(lambda _:self.req(f'/api/projects/{pid}/claims/{cid}/publish','POST',{},'test-admin-secret-long-enough')[0],range(8)))
