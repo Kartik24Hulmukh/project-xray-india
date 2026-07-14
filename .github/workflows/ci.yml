@@ -9,3 +9,4 @@ jobs:
       - uses: actions/setup-python@v5
         with: {python-version: '3.13'}
       - run: python3 scripts/check_release.py
+      - run: python3 scripts/smoke_e2e.py

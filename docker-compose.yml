@@ -4,6 +4,13 @@ services:
     ports: ["8080:8080"]
     environment:
       ADMIN_TOKEN: ${ADMIN_TOKEN:?set ADMIN_TOKEN in .env}
+      REVIEWER_TOKENS: ${REVIEWER_TOKENS:?set two reviewer tokens in .env}
+      SCANNER_TOKENS: ${SCANNER_TOKENS:?set a scanner token in .env}
+      TOKEN_PEPPER: ${TOKEN_PEPPER:?set TOKEN_PEPPER in .env}
+      AUDIT_HMAC_KEY: ${AUDIT_HMAC_KEY:?set AUDIT_HMAC_KEY in .env}
+      BACKUP_HMAC_KEY: ${BACKUP_HMAC_KEY:?set BACKUP_HMAC_KEY in .env}
+      WRITE_RATE_LIMIT: ${WRITE_RATE_LIMIT:-60}
+      APP_ENV: ${APP_ENV:-development}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
     volumes: ["xray-data:/app/data"]
     read_only: true
