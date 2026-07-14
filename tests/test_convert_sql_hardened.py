@@ -100,6 +100,16 @@ class TestConvertSqlHardened(unittest.TestCase):
             result = _convert_sql(sql)
             self.assertEqual(result, "SELECT 100%% FROM t WHERE id=%s")
 
+    def test_existing_percent_s_placeholders_preserved(self):
+        with patch.object(dbmod, 'IS_POSTGRES', True):
+            sql = "SELECT 1 FROM information_schema.tables WHERE table_name = %s"
+            self.assertEqual(_convert_sql(sql), sql)
+
+    def test_mixed_question_and_existing_percent_s(self):
+        with patch.object(dbmod, 'IS_POSTGRES', True):
+            sql = "SELECT %s, ? FROM t WHERE id=?"
+            self.assertEqual(_convert_sql(sql), "SELECT %s, %s FROM t WHERE id=%s")
+
     def test_escaped_single_quotes(self):
         with patch.object(dbmod, 'IS_POSTGRES', True):
             sql = "SELECT 'it''s fine?' FROM t WHERE id=?"

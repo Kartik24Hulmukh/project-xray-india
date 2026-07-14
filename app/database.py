@@ -168,8 +168,23 @@ def _convert_sql(query):
             result.append('%s')
             i += 1
             continue
-        # Escape literal % for psycopg2 pyformat safety when mixed with %s
+        # Escape bare % for psycopg2, but preserve existing pyformat tokens:
+        # %%, %s, and %(name)s must pass through unchanged so native PG SQL works.
         if ch == '%':
+            rest = query[i:]
+            if rest.startswith('%%'):
+                result.append('%%')
+                i += 2
+                continue
+            if rest.startswith('%s'):
+                result.append('%s')
+                i += 2
+                continue
+            m = re.match(r'%\([A-Za-z_][A-Za-z0-9_]*\)s', rest)
+            if m:
+                result.append(m.group(0))
+                i += len(m.group(0))
+                continue
             result.append('%%')
             i += 1
             continue
