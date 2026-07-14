@@ -15,6 +15,7 @@ Legacy SQLite migration tools remain SQLite-only; this script is the supported
 runtime recovery entrypoint for both backends.
 """
 import argparse
+import re
 import json
 import os
 import sqlite3
@@ -42,14 +43,48 @@ REQUIRED_TABLES = {
 
 
 def _pg_env():
+    """Build env for pg_dump/pg_restore without putting secrets on argv.
+
+    Password is supplied only via PGPASSWORD in the child environment.
+    Callers must never pass DATABASE_URL as a CLI argument.
+    """
     url = os.getenv('DATABASE_URL', '')
     env = dict(os.environ)
+    # Never inherit a leaked PGPASSWORD from the parent unless we set it.
+    env.pop('PGPASSWORD', None)
     if not url:
         return env
     parsed = urlparse(url)
     if parsed.password:
         env['PGPASSWORD'] = parsed.password
     return env
+
+
+def _redact_pg_text(text, parsed=None):
+    """Remove credential material from tool output before raising/logging."""
+    if text is None:
+        return ''
+    if isinstance(text, bytes):
+        text = text.decode(errors='replace')
+    url = os.getenv('DATABASE_URL', '')
+    if url:
+        text = text.replace(url, '***REDACTED_DATABASE_URL***')
+    if parsed is None and url:
+        parsed = urlparse(url)
+    if parsed is not None:
+        if parsed.password:
+            text = text.replace(parsed.password, '***REDACTED***')
+        if parsed.username:
+            # Avoid leaking username in odd error paths only when paired with host
+            pass
+        netloc = parsed.netloc or ''
+        if netloc and netloc in text:
+            host = parsed.hostname or ''
+            port = parsed.port or 5432
+            text = text.replace(netloc, f'***@{host}:{port}')
+    # Generic patterns
+    text = re.sub(r'postgres(?:ql)?://[^\s]+', '***REDACTED_DATABASE_URL***', text)
+    return text
 
 
 def integrity(path=None, audit_key=None):
@@ -132,10 +167,7 @@ def backup(source, destination, key=None, audit_key=None):
             env=_pg_env(),
         )
         if result.returncode:
-            stderr = result.stderr.decode()
-            # Redact any accidental credential echo from pg_dump
-            if parsed.password:
-                stderr = stderr.replace(parsed.password, '***REDACTED***')
+            stderr = _redact_pg_text(result.stderr, parsed)
             raise RuntimeError(f'pg_dump failed: {stderr}')
         checks = integrity(None, audit_key)
         os.chmod(tmp, 0o600)
@@ -184,14 +216,12 @@ def restore(source, destination, force=False, key=None, audit_key=None, manifest
             env=_pg_env(),
         )
         if result.returncode:
-            stderr = result.stderr.decode()
-            if parsed.password:
-                stderr = stderr.replace(parsed.password, '***REDACTED***')
+            stderr = _redact_pg_text(result.stderr, parsed)
             # pg_restore can return non-zero for non-fatal notices; re-check integrity
             try:
                 restored = integrity(None, audit_key)
             except Exception as e:
-                raise RuntimeError(f'pg_restore failed: {stderr} ({e})')
+                raise RuntimeError(f'pg_restore failed: {stderr} ({type(e).__name__})')
         else:
             restored = integrity(None, audit_key)
         return {
