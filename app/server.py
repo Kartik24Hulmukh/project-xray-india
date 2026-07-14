@@ -5,7 +5,6 @@ import json
 import os
 import re
 import secrets
-import sqlite3
 import time
 import uuid
 from contextlib import contextmanager
@@ -16,11 +15,13 @@ from urllib.parse import parse_qs, urlparse
 
 try:
     from app.audit import append as append_audit, verify as verify_audit
+    from app.database import connect, db, IS_POSTGRES, IntegrityError, get_schema_version, set_schema_version, table_exists, integrity_check
     from app.operations import send_alert
     from app.security import token_hash, verify_proxy
     from app.storage import verify_managed_object
 except ModuleNotFoundError:
     from audit import append as append_audit, verify as verify_audit
+    from database import connect, db, IS_POSTGRES, IntegrityError, get_schema_version, set_schema_version, table_exists, integrity_check
     from operations import send_alert
     from security import token_hash, verify_proxy
     from storage import verify_managed_object
@@ -93,21 +94,16 @@ def uid(prefix):
     return prefix + '_' + uuid.uuid4().hex[:16]
 
 
-def connect(path=None):
-    p = Path(path or DB)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    c = sqlite3.connect(p, timeout=10, check_same_thread=False)
-    c.row_factory = sqlite3.Row
-    c.execute('PRAGMA foreign_keys=ON')
-    c.execute('PRAGMA busy_timeout=5000')
-    return c
+def connect_db(path=None):
+    """Connect using the database abstraction layer."""
+    return connect(path)
 
 
 @contextmanager
 def db(write=False):
     c = connect()
     try:
-        if write:
+        if write and not IS_POSTGRES:
             c.execute('BEGIN IMMEDIATE')
         yield c
         if write:
@@ -127,7 +123,8 @@ def bootstrap(c, principal, role, secret, ttl=86400):
     expires = (datetime.now(timezone.utc) + timedelta(seconds=ttl)).isoformat()
     digest = token_hash(secret, TOKEN_PEPPER)
     c.execute(
-        'INSERT OR IGNORE INTO auth_tokens(id,principal,role,token_hash,expires_at,created_at) VALUES(?,?,?,?,?,?)',
+        'INSERT' + (' OR IGNORE' if not IS_POSTGRES else '') + ' INTO auth_tokens(id,principal,role,token_hash,expires_at,created_at) VALUES(?,?,?,?,?,?)'
+        + (' ON CONFLICT DO NOTHING' if IS_POSTGRES else ''),
         (uid('tok'), principal, role, digest, expires, created),
     )
 
@@ -152,12 +149,17 @@ def init():
             raise RuntimeError('production configuration missing/unsafe: ' + ','.join(missing))
 
     with db(True) as c:
-        legacy = c.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='sources'"
-        ).fetchone()
-        if legacy and c.execute('PRAGMA user_version').fetchone()[0] not in (0, 3):
-            raise RuntimeError('database migration required; run scripts/migrate_v2_to_v3.py')
-        c.executescript((ROOT / 'db/schema.sql').read_text())
+        if not IS_POSTGRES:
+            legacy = c.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='sources'"
+            ).fetchone()
+            if legacy and get_schema_version(c) not in (0, 3):
+                raise RuntimeError('database migration required; run scripts/migrate_v2_to_v3.py')
+            c.executescript((ROOT / 'db/schema.sql').read_text())
+        else:
+            # PostgreSQL: load the PostgreSQL schema
+            schema_path = ROOT / 'db/schema_postgres.sql'
+            c.executescript(schema_path.read_text())
         ttl = int(os.getenv('BOOTSTRAP_TOKEN_TTL_SECONDS', '86400'))
         bootstrap(c, 'admin', 'admin', ADMIN_TOKEN, ttl)
         for principal, secret in REVIEWER_TOKENS.items():
@@ -1081,7 +1083,7 @@ class H(BaseHTTPRequestHandler):
                     return self.out({'id': project_id, 'status': 'published'})
 
                 return self.out({'error': 'not found'}, 404)
-        except sqlite3.IntegrityError as e:
+        except IntegrityError as e:
             return self.out({'error': 'conflict', 'detail': str(e)}, 409)
         except (ValueError, TypeError) as e:
             return self.out({'error': str(e)}, 400)

@@ -22,5 +22,11 @@ migrate-v3:
 backup:
 	python3 scripts/recovery.py backup $${DB_PATH:-data/project_xray.db} backups/project_xray.db
 
+preflight:
+	python3 scripts/preflight_prod_env.py --output artifacts/prod-rehearsal/preflight.json
+
+prod-rehearsal:
+	python3 scripts/rehearse_production.py
+
 package:
 	./scripts/create_release.sh

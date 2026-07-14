@@ -1,0 +1,130 @@
+# ─────────────────────────────────────────────────────────────────────
+# Production docker-compose for Project X-Ray India
+#
+# Uses PostgreSQL (not SQLite) as the primary database.
+# Requires a .env.production file with all variables documented in
+# .env.production.example.
+#
+# Usage:
+#   docker compose -f docker-compose.prod.yml --env-file .env.production up -d
+#
+# Health checks:
+#   - PostgreSQL: pg_isready against the app database
+#   - Web app: HTTP GET /health
+# ─────────────────────────────────────────────────────────────────────
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-xray}
+      POSTGRES_USER: ${POSTGRES_USER:-xray}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.production}
+    volumes:
+      - xray-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-xray} -d ${POSTGRES_DB:-xray}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    read_only: false
+    tmpfs:
+      - /tmp
+      - /run/postgresql
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+    networks:
+      - xray-internal
+
+  web:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "${PORT:-8080}:8080"
+    environment:
+      # ── Database (PostgreSQL) ──
+      DATABASE_URL: postgresql://${POSTGRES_USER:-xray}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-xray}
+      DB_POOL_MAX: ${DB_POOL_MAX:-10}
+
+      # ── Server ──
+      PORT: "8080"
+      MAX_BODY_BYTES: ${MAX_BODY_BYTES:-2097152}
+      APP_ENV: production
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?set PUBLIC_BASE_URL in .env.production}
+
+      # ── Auth / Security keys ──
+      ADMIN_TOKEN: ${ADMIN_TOKEN:?set ADMIN_TOKEN in .env.production}
+      REVIEWER_TOKENS: ${REVIEWER_TOKENS:?set REVIEWER_TOKENS in .env.production}
+      SCANNER_TOKENS: ${SCANNER_TOKENS:?set SCANNER_TOKENS in .env.production}
+      TOKEN_PEPPER: ${TOKEN_PEPPER:?set TOKEN_PEPPER in .env.production}
+      AUDIT_HMAC_KEY: ${AUDIT_HMAC_KEY:?set AUDIT_HMAC_KEY in .env.production}
+      BACKUP_HMAC_KEY: ${BACKUP_HMAC_KEY:?set BACKUP_HMAC_KEY in .env.production}
+      OIDC_PROXY_SECRET: ${OIDC_PROXY_SECRET:?set OIDC_PROXY_SECRET in .env.production}
+      BOOTSTRAP_TOKEN_TTL_SECONDS: ${BOOTSTRAP_TOKEN_TTL_SECONDS:-86400}
+
+      # ── Rate limiting ──
+      WRITE_RATE_LIMIT: ${WRITE_RATE_LIMIT:-60}
+      PUBLIC_READ_RATE_LIMIT: ${PUBLIC_READ_RATE_LIMIT:-300}
+      AUTH_READ_RATE_LIMIT: ${AUTH_READ_RATE_LIMIT:-120}
+      EXPENSIVE_WRITE_RATE_LIMIT: ${EXPENSIVE_WRITE_RATE_LIMIT:-15}
+
+      # ── Proxy / OIDC ──
+      TRUST_PROXY_HEADERS: "1"
+
+      # ── Object storage (S3-compatible) ──
+      OBJECT_STORAGE_MODE: managed
+      STORAGE_ENDPOINT: ${STORAGE_ENDPOINT:?set STORAGE_ENDPOINT in .env.production}
+      STORAGE_BUCKET: ${STORAGE_BUCKET:?set STORAGE_BUCKET in .env.production}
+      STORAGE_REGION: ${STORAGE_REGION:-ap-south-1}
+      STORAGE_ACCESS_KEY: ${STORAGE_ACCESS_KEY:?set STORAGE_ACCESS_KEY in .env.production}
+      STORAGE_SECRET_KEY: ${STORAGE_SECRET_KEY:?set STORAGE_SECRET_KEY in .env.production}
+
+      # ── Monitoring / alerting ──
+      MONITORING_WEBHOOK_URL: ${MONITORING_WEBHOOK_URL:?set MONITORING_WEBHOOK_URL in .env.production}
+      MONITORING_WEBHOOK_SECRET: ${MONITORING_WEBHOOK_SECRET:?set MONITORING_WEBHOOK_SECRET in .env.production}
+    volumes:
+      - xray-uploads:/app/data/uploads
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+    networks:
+      - xray-internal
+
+volumes:
+  xray-pgdata:
+    driver: local
+  xray-uploads:
+    driver: local
+
+networks:
+  xray-internal:
+    driver: bridge

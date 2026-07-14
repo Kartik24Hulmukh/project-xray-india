@@ -368,7 +368,7 @@ class TestCore(unittest.TestCase):
         c.close()
         from app.audit import verify
 
-        bad = server.connect(copy.name)
+        bad = server.connect_db(copy.name)
         with self.assertRaises(RuntimeError):
             verify(bad, server.AUDIT_KEY)
         bad.close()

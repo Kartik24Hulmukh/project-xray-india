@@ -10,6 +10,7 @@
 - Updated the security workflow to use the MIT-licensed gitleaks CLI directly instead of the licensed GitHub action.
 - Automated verification now covers 26 tests, browser acceptance, smoke path, release checks, and repeat loop runs.
 - Added downloadable evidence capsules plus `scripts/verify_capsule.py` for offline public-verification flows.
+- Added `scripts/preflight_prod_env.py` and `scripts/rehearse_production.py` for provider-neutral production-mode rehearsal with signed OIDC, managed-storage, monitoring, capsule, and recovery receipts.
 
 ## v0.3.0 — transactional production hardening
 

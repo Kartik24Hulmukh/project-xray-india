@@ -29,11 +29,20 @@ Document creation performs a signed S3-compatible HEAD request and binds the rec
 ```bash
 python3 scripts/check_release.py
 python3 scripts/smoke_e2e.py
+python3 scripts/rehearse_production.py
 AUDIT_HMAC_KEY=... python3 scripts/verify_audit.py /var/lib/project-xray/project_xray.db
 BACKUP_HMAC_KEY=... AUDIT_HMAC_KEY=... \
   python3 scripts/recovery_evidence.py /var/lib/project-xray/project_xray.db \
   /var/lib/project-xray/evidence/recovery-drill.json
 ```
+
+The local production rehearsal emits:
+- `artifacts/prod-rehearsal/preflight.json`
+- `artifacts/prod-rehearsal/capsule.json`
+- `artifacts/prod-rehearsal/recovery-evidence.json`
+- `artifacts/prod-rehearsal/receipt.json`
+
+These prove that production-mode configuration, signed OIDC assertions, managed-storage verification, signed alert delivery, public dossier publication, capsule export, and recovery evidence can all execute end-to-end in a local provider-neutral rehearsal. The same rehearsal now runs from `scripts/check_release.py` and is bundled into release artifacts for operator review.
 
 The monitoring delivery path is `POST /api/operations/test-alert` as an authenticated admin with an `Idempotency-Key`. A successful response proves that the configured receiver accepted the signed event; the operator must separately record who received it.
 

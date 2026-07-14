@@ -48,6 +48,7 @@ Run tests:
 python3 -m unittest discover -s tests -v
 python3 scripts/check_release.py
 python3 scripts/smoke_e2e.py
+python3 scripts/rehearse_production.py
 python3 scripts/verify_capsule.py capsule.json
 # Production contract and required evidence:
 # docs/PRODUCTION_DEPLOYMENT.md

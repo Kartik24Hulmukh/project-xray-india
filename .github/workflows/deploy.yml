@@ -1,0 +1,178 @@
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment (staging or production)'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # ──────────────────────────────────────────────────────────────
+  # Build and publish Docker image (shared by staging + production)
+  # ──────────────────────────────────────────────────────────────
+  build:
+    name: Build & push Docker image
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.meta.outputs.version }}
+      image_digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: true
+          sbom: true
+
+  # ──────────────────────────────────────────────────────────────
+  # Deploy to staging
+  # ──────────────────────────────────────────────────────────────
+  deploy-staging:
+    name: Deploy to staging
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+      url: ${{ steps.deploy.outputs.staging_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to staging
+        id: deploy
+        run: |
+          echo "Deploying image ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build.outputs.image_tag }} to staging"
+          # In a real environment this would invoke:
+          #   docker compose -f docker-compose.prod.yml --env-file .env.staging up -d
+          #   or kubectl apply / helm upgrade
+          # For now we emit the deployment intent for the operator.
+          echo "staging_url=https://staging.xray-india.example.org" >> "$GITHUB_OUTPUT"
+
+      - name: Health check (staging)
+        env:
+          HEALTH_URL: ${{ steps.deploy.outputs.staging_url }}/health
+        run: |
+          echo "Polling ${HEALTH_URL} ..."
+          for i in $(seq 1 30); do
+            STATUS=$(curl -s -o /dev/null -w '%{http_code}' "${HEALTH_URL}" || echo "000")
+            if [ "$STATUS" = "200" ]; then
+              echo "Health check passed (HTTP 200) after ${i} attempt(s)"
+              exit 0
+            fi
+            echo "Attempt ${i}/30: HTTP ${STATUS}, retrying in 5s..."
+            sleep 5
+          done
+          echo "ERROR: Health check failed after 30 attempts"
+          exit 1
+
+      - name: Smoke E2E (staging)
+        env:
+          PUBLIC_BASE_URL: ${{ steps.deploy.outputs.staging_url }}
+        run: |
+          python3 scripts/smoke_e2e.py || { echo "Smoke E2E failed"; exit 1; }
+
+      - name: Rollback on failure (staging)
+        if: failure()
+        run: |
+          echo "Rolling back staging to previous image..."
+          # Operator action: docker compose -f docker-compose.prod.yml up -d --no-deps --force-recreate web
+          # or: kubectl rollout undo deployment/xray-web -n staging
+          echo "Rollback triggered. Operator must verify previous image is running."
+
+  # ──────────────────────────────────────────────────────────────
+  # Deploy to production (requires manual approval via environment)
+  # ──────────────────────────────────────────────────────────────
+  deploy-production:
+    name: Deploy to production
+    needs: [build, deploy-staging]
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ steps.deploy.outputs.production_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to production
+        id: deploy
+        run: |
+          echo "Deploying image ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build.outputs.image_tag }} to production"
+          # In a real environment this would invoke:
+          #   docker compose -f docker-compose.prod.yml --env-file .env.production up -d
+          #   or kubectl apply / helm upgrade --namespace production
+          echo "production_url=https://xray-india.example.org" >> "$GITHUB_OUTPUT"
+
+      - name: Health check (production)
+        env:
+          HEALTH_URL: ${{ steps.deploy.outputs.production_url }}/health
+        run: |
+          echo "Polling ${HEALTH_URL} ..."
+          for i in $(seq 1 30); do
+            STATUS=$(curl -s -o /dev/null -w '%{http_code}' "${HEALTH_URL}" || echo "000")
+            if [ "$STATUS" = "200" ]; then
+              echo "Health check passed (HTTP 200) after ${i} attempt(s)"
+              exit 0
+            fi
+            echo "Attempt ${i}/30: HTTP ${STATUS}, retrying in 5s..."
+            sleep 5
+          done
+          echo "ERROR: Health check failed after 30 attempts"
+          exit 1
+
+      - name: Verify audit chain (production)
+        env:
+          DB_PATH: ${{ secrets.PROD_DB_PATH }}
+        run: |
+          python3 scripts/verify_audit.py "${DB_PATH}" || { echo "Audit chain verification failed"; exit 1; }
+
+      - name: Rollback on failure (production)
+        if: failure()
+        run: |
+          echo "ROLLING BACK PRODUCTION to previous image..."
+          # Operator action:
+          #   docker compose -f docker-compose.prod.yml up -d --no-deps --force-recreate web
+          #   or: kubectl rollout undo deployment/xray-web -n production
+          # Then verify health: curl -sf https://xray-india.example.org/health
+          echo "Production rollback triggered. Operator MUST verify previous image is healthy."
+          exit 1

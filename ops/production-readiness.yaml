@@ -11,24 +11,24 @@ checks:
     evidence: null
   - id: auth.oidc_mfa_roles
     owner: security
-    status: pending
-    evidence: null
+    status: partial
+    evidence: artifacts/prod-rehearsal/receipt.json
   - id: storage.quarantine_scan_redaction
     owner: security
-    status: pending
-    evidence: null
+    status: partial
+    evidence: artifacts/prod-rehearsal/receipt.json
   - id: privacy.public_allowlist
     owner: privacy
     status: pending
     evidence: null
   - id: recovery.backup_restore_rpo_rto
     owner: operations
-    status: pending
-    evidence: null
+    status: partial
+    evidence: artifacts/prod-rehearsal/recovery-evidence.json
   - id: observability.alert_reaches_human
     owner: operations
-    status: pending
-    evidence: null
+    status: partial
+    evidence: artifacts/prod-rehearsal/receipt.json
   - id: editorial.two_launch_dossiers_two_reviewers
     owner: editorial
     status: pending
