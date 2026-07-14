@@ -37,6 +37,16 @@ from app import server
 class TestCore(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        # Re-assert isolation if other suites mutated process env/module state.
+        os.environ['DB_PATH'] = TMP.name + '/test.db'
+        server.DB = Path(os.environ['DB_PATH'])
+        try:
+            from app import database as database
+            database.DB_PATH = server.DB
+            database.DATABASE_URL = ''
+            database.IS_POSTGRES = False
+        except Exception:
+            pass
         server.init()
         cls.http = server.ThreadingHTTPServer(('127.0.0.1', 18081), server.H)
         threading.Thread(target=cls.http.serve_forever, daemon=True).start()
@@ -47,7 +57,8 @@ class TestCore(unittest.TestCase):
         TMP.cleanup()
 
     def setUp(self):
-        server.RATE.clear()
+        with server._RATE_LOCK:
+            server.RATE.clear()
         server.TRUST_PROXY_HEADERS = False
         server.PUBLIC_READ_RATE_LIMIT = 1000
         server.AUTH_READ_RATE_LIMIT = 1000

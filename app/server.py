@@ -6,6 +6,7 @@ import os
 import re
 import secrets
 import time
+import threading
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
@@ -38,6 +39,8 @@ AUTH_READ_RATE_LIMIT = int(os.getenv('AUTH_READ_RATE_LIMIT', '120'))
 WRITE_RATE_LIMIT = int(os.getenv('WRITE_RATE_LIMIT', '60'))
 EXPENSIVE_WRITE_RATE_LIMIT = int(os.getenv('EXPENSIVE_WRITE_RATE_LIMIT', '15'))
 TRUST_PROXY_HEADERS = os.getenv('TRUST_PROXY_HEADERS', '0') == '1'
+_RATE_LOCK = threading.Lock()
+_METRICS_LOCK = threading.Lock()
 RATE = {}
 METRICS = {
     'requests': 0,
@@ -50,6 +53,16 @@ METRICS = {
     'idempotency_conflicts': 0,
     'quarantine_blocks': 0,
 }
+
+
+def _metric_inc(name, amount=1):
+    with _METRICS_LOCK:
+        METRICS[name] = METRICS.get(name, 0) + amount
+
+
+def metrics_snapshot():
+    with _METRICS_LOCK:
+        return dict(METRICS)
 
 TOKEN_PEPPER = os.getenv('TOKEN_PEPPER', 'development-token-pepper-not-for-production')
 AUDIT_KEY = os.getenv('AUDIT_HMAC_KEY', 'development-audit-key-not-for-production')
@@ -392,6 +405,7 @@ class H(BaseHTTPRequestHandler):
         self.request_id = ''
         self.tx = None
         self.idem = None
+        self._xray_headers_sent = False
 
     def log_message(self, fmt, *args):
         print(
@@ -422,10 +436,11 @@ class H(BaseHTTPRequestHandler):
         if PUBLIC_BASE_URL.startswith('https://'):
             self.send_header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
         self.end_headers()
+        self._xray_headers_sent = True
 
     def out(self, obj, code=200):
         if code >= 400:
-            METRICS['errors'] += 1
+            _metric_inc('errors')
         body = json.dumps(obj, ensure_ascii=False, separators=(',', ':'))
         if 200 <= code < 300 and self.idem:
             c = self.tx
@@ -461,7 +476,7 @@ class H(BaseHTTPRequestHandler):
     def principal(self, roles):
         role, actor = auth(self.headers)
         if role not in roles:
-            METRICS['auth_failures'] += 1
+            _metric_inc('auth_failures')
             self.out({'error': 'unauthorized'}, 401)
             return None
         return role, actor
@@ -477,7 +492,74 @@ class H(BaseHTTPRequestHandler):
         except ValueError:
             return remote
 
+    def _headers_sent(self):
+        return bool(getattr(self, '_headers_buffer', None) is not None and getattr(self, 'wfile', None) and getattr(self, '_xray_headers_sent', False))
+
+    def _fail_safe(self, exc, method='GET'):
+        """Return a generic 500 without leaking exception details to clients."""
+        import traceback
+        path = ''
+        try:
+            path = urlparse(self.path).path
+        except Exception:
+            path = getattr(self, 'path', '')
+        rid = getattr(self, 'request_id', None) or uid('req')
+        self.request_id = rid
+        # Structured server log — never include auth headers or secrets
+        print(
+            json.dumps(
+                {
+                    'time': now(),
+                    'level': 'error',
+                    'request_id': rid,
+                    'method': method,
+                    'path': path,
+                    'exception_class': type(exc).__name__,
+                    'stack': traceback.format_exc(),
+                },
+                separators=(',', ':'),
+            )
+        )
+        _metric_inc('errors')
+        if getattr(self, '_xray_headers_sent', False):
+            # Partially written response — do not attempt a second write
+            return
+        try:
+            self._xray_headers_sent = True
+            body = json.dumps(
+                {'error': 'internal server error', 'request_id': rid},
+                separators=(',', ':'),
+            )
+            self.send_response(500)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('X-Content-Type-Options', 'nosniff')
+            self.send_header('X-Frame-Options', 'DENY')
+            self.send_header('Referrer-Policy', 'no-referrer')
+            self.send_header('Permissions-Policy', 'camera=(), microphone=(), geolocation=()')
+            self.send_header(
+                'Content-Security-Policy',
+                "default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+            )
+            self.send_header('Cache-Control', 'no-store')
+            self.send_header('X-Request-ID', rid)
+            if PUBLIC_BASE_URL.startswith('https://'):
+                self.send_header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
+            self.end_headers()
+            self.wfile.write(body.encode())
+        except Exception:
+            pass
+
+    def do_OPTIONS(self):
+        # Explicitly reject cross-origin preflight — same-origin only API
+        self.request_id = self.headers.get('X-Request-ID') or uid('req')
+        self.send_response(405)
+        self.send_header('Allow', 'GET, POST')
+        self.send_header('X-Request-ID', self.request_id)
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        self.end_headers()
+
     def rate_bucket(self, method, path):
+
         if path in {'/health', '/ready'} or path in {'/', '/index.html', '/app.js', '/styles.css'}:
             return None
         if method == 'GET':
@@ -501,12 +583,16 @@ class H(BaseHTTPRequestHandler):
         category, limit = bucket
         minute = int(time.time() // 60)
         key = (category, self.client_identity(), minute)
-        slot = RATE.get(key, 0)
-        RATE[key] = slot + 1
-        for old in [k for k in RATE if k[2] < minute - 1]:
-            RATE.pop(old, None)
-        if slot >= limit:
-            METRICS['rate_limited'] += 1
+        with _RATE_LOCK:
+            slot = RATE.get(key, 0)
+            RATE[key] = slot + 1
+            # Bounded cleanup of stale rate-limit entries (no I/O under lock)
+            stale = [k for k in RATE if k[2] < minute - 1]
+            for old in stale:
+                RATE.pop(old, None)
+            limited_now = slot >= limit
+        if limited_now:
+            _metric_inc('rate_limited')
             return True
         return False
 
@@ -535,12 +621,12 @@ class H(BaseHTTPRequestHandler):
                 (actor, key),
             ).fetchone()
             if old:
-                METRICS['idempotency_conflicts'] += 1
+                _metric_inc('idempotency_conflicts')
                 if old['request_hash'] != request_hash:
                     self.out({'error': 'idempotency key reused with different request'}, 409)
                     return False
                 if old['state'] == 'completed':
-                    METRICS['idempotency_replays'] += 1
+                    _metric_inc('idempotency_replays')
                     self.common(old['response_code'], 'application/json; charset=utf-8')
                     self.wfile.write(old['response_body'].encode())
                     return False
@@ -554,8 +640,14 @@ class H(BaseHTTPRequestHandler):
         return True
 
     def do_GET(self):
-        METRICS['requests'] += 1
         self.request_id = self.headers.get('X-Request-ID') or uid('req')
+        try:
+            self._handle_get()
+        except Exception as exc:
+            self._fail_safe(exc, method='GET')
+
+    def _handle_get(self):
+        _metric_inc('requests')
         parsed = urlparse(self.path)
         path = parsed.path
         query = parse_qs(parsed.query)
@@ -576,7 +668,7 @@ class H(BaseHTTPRequestHandler):
         if path == '/metrics':
             if not self.principal(('admin',)):
                 return
-            lines = '\n'.join(f'project_xray_{k}_total {v}' for k, v in METRICS.items()) + '\n'
+            lines = '\n'.join(f'project_xray_{k}_total {v}' for k, v in metrics_snapshot().items()) + '\n'
             return self.text(lines, ctype='text/plain; version=0.0.4')
         if path == '/api/auth/tokens':
             if not self.principal(('admin',)):
@@ -686,9 +778,15 @@ class H(BaseHTTPRequestHandler):
         self.wfile.write(p.read_bytes())
 
     def do_POST(self):
-        METRICS['requests'] += 1
-        METRICS['writes'] += 1
         self.request_id = self.headers.get('X-Request-ID') or uid('req')
+        try:
+            self._handle_post()
+        except Exception as exc:
+            self._fail_safe(exc, method='POST')
+
+    def _handle_post(self):
+        _metric_inc('requests')
+        _metric_inc('writes')
         path = urlparse(self.path).path
         segments = [x for x in path.split('/') if x]
 
@@ -702,10 +800,14 @@ class H(BaseHTTPRequestHandler):
 
         try:
             data = self.body()
-        except OverflowError as e:
-            return self.out({'error': str(e)}, 413)
+        except OverflowError:
+            return self.out({'error': 'request too large'}, 413)
         except (ValueError, TypeError) as e:
-            return self.out({'error': str(e)}, 400)
+            # Validation errors may expose field names only; never stack traces
+            msg = str(e)
+            if any(s in msg.lower() for s in ('password', 'secret', 'token', 'authorization', 'bearer')):
+                msg = 'invalid request'
+            return self.out({'error': msg}, 400)
 
         if not self.reserve_idempotency(actor, data):
             return
@@ -971,14 +1073,14 @@ class H(BaseHTTPRequestHandler):
                     if approvals < 2:
                         return self.out({'error': 'two current-version approvals required'}, 409)
                     if not source_publishable(c, claim['source_id']):
-                        METRICS['quarantine_blocks'] += 1
+                        _metric_inc('quarantine_blocks')
                         return self.out({'error': 'source document remains quarantined or rejected'}, 409)
                     if claim['publication_state'] in PUBLIC_STATES:
                         return self.out({'id': segments[4], 'version': claim['version'], 'publication_state': claim['publication_state']})
                     state = 'corrected' if claim['version'] > 1 else 'published'
                     c.execute('UPDATE claims SET publication_state=?,updated_at=? WHERE id=?', (state, now(), segments[4]))
                     audit(c, actor, 'publish', 'claim', segments[4], f'project={project_id};version={claim["version"]}')
-                    METRICS['publications'] += 1
+                    _metric_inc('publications')
                     return self.out({'id': segments[4], 'version': claim['version'], 'publication_state': state})
 
                 if kind == 'claims' and len(segments) == 6 and valid_id(segments[4], 'clm') and segments[5] == 'correct':
@@ -1075,17 +1177,20 @@ class H(BaseHTTPRequestHandler):
                     ).fetchone()['n']
                     if pending or not published or bad:
                         if bad:
-                            METRICS['quarantine_blocks'] += 1
+                            _metric_inc('quarantine_blocks')
                         return self.out({'error': 'project has pending claims or non-clean evidence'}, 409)
                     c.execute("UPDATE projects SET status='published',updated_at=? WHERE id=?", (now(), project_id))
                     audit(c, actor, 'publish', 'project', project_id)
                     return self.out({'id': project_id, 'status': 'published'})
 
                 return self.out({'error': 'not found'}, 404)
-        except IntegrityError as e:
-            return self.out({'error': 'conflict', 'detail': str(e)}, 409)
+        except IntegrityError:
+            return self.out({'error': 'conflict'}, 409)
         except (ValueError, TypeError) as e:
-            return self.out({'error': str(e)}, 400)
+            msg = str(e)
+            if any(s in msg.lower() for s in ('password', 'secret', 'token', 'authorization', 'bearer')):
+                msg = 'invalid request'
+            return self.out({'error': msg}, 400)
         finally:
             self.tx = None
 

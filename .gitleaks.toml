@@ -1,17 +1,44 @@
 title = "Project X-Ray India gitleaks config"
 
+# Narrow allowlists only — never repository-wide secret suppression.
+# Generated release artifacts and normal source must still be scanned.
+# A realistic fake secret in app/ must still fail detection.
+# gitleaks v8.30 expects a single [allowlist] map (not [[allowlist]] arrays).
+
 [allowlist]
-description = "Allowlisted paths for example/template/test files"
+description = "Documented placeholders, synthetic test tokens, and self-referential scanner config"
 paths = [
-    '''\.env\.production\.example$''',
-    '''\.env\.example$''',
-    '''docker-compose\.prod\.yml$''',
-    '''docker-compose\.yml$''',
-    '''tests/.*\.py$''',
-    '''scripts/.*\.py$''',
-    '''scripts/.*\.mjs$''',
-    '''AUDIT_REPORT\.md$''',
-    '''docs/.*\.md$''',
-    '''\.gitleaksignore$''',
-    '''\.gitleaks\.toml$''',
+    '''^\.env\.example$''',
+    '''^\.env\.production\.example$''',
+    '''^docker-compose\.yml$''',
+    '''^docker-compose\.prod\.yml$''',
+    '''^tests/test_.*\.py$''',
+    '''^scripts/smoke_e2e\.py$''',
+    '''^scripts/ui_acceptance\.mjs$''',
+    '''^scripts/rehearse_production\.py$''',
+    '''^\.gitleaks\.toml$''',
+    '''^\.gitleaksignore$''',
+]
+regexes = [
+    '''change-before-deploy''',
+    '''change-to-strong-password''',
+    '''change-to-32-plus-random-characters''',
+    '''development-[a-z0-9-]+-not-for-production''',
+    '''REPLACE_WITH_[A-Z0-9_]+''',
+    '''\$\{[A-Z0-9_]+\}''',
+    '''test-admin-secret-long-enough''',
+    '''review-token-a''',
+    '''review-token-b''',
+    '''scan-token-a''',
+    '''ui-admin-token-12345678901234567890''',
+    '''ui-review-token-a''',
+    '''ui-review-token-b''',
+    '''ui-scan-token-a''',
+    '''smoke-admin-token-123456789''',
+    '''smoke-reviewer-a-token''',
+    '''smoke-reviewer-b-token''',
+    '''proxy-secret-1234567890123456789012''',
+    '''development-token-pepper-not-for-production''',
+    '''development-audit-key-not-for-production''',
+    '''development-backup-key-not-for-production''',
 ]

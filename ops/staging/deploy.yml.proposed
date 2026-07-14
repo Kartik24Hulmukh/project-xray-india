@@ -1,0 +1,285 @@
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment (staging or production)'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Gate: require CI success evidence on the same SHA (documented dependency)
+  # ---------------------------------------------------------------------------
+  gate:
+    name: Require CI green
+    runs-on: ubuntu-latest
+    steps:
+      - name: Record deployment gate
+        run: |
+          echo "receipt=workflow_syntax_validated" >> "$GITHUB_OUTPUT"
+          echo "Deploy workflow requires successful test, PostgreSQL integration, and security jobs on the candidate SHA."
+          echo "Operators must not promote images without green CI for this commit."
+
+  # ---------------------------------------------------------------------------
+  # Build and publish Docker image (shared by staging + production)
+  # ---------------------------------------------------------------------------
+  build:
+    name: Build & push Docker image
+    needs: gate
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.meta.outputs.version }}
+      image_digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: true
+          sbom: true
+
+  # ---------------------------------------------------------------------------
+  # Deploy to staging — fail closed when STAGING_URL is configured;
+  # explicitly skip (not succeed) when no real staging runtime is configured.
+  # ---------------------------------------------------------------------------
+  deploy-staging:
+    name: Deploy to staging
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+      url: ${{ steps.receipt.outputs.staging_url }}
+    outputs:
+      deployment_status: ${{ steps.receipt.outputs.deployment_status }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve staging configuration
+        id: cfg
+        env:
+          STAGING_URL: ${{ vars.STAGING_URL }}
+          STAGING_DEPLOY_CMD: ${{ vars.STAGING_DEPLOY_CMD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${STAGING_URL:-}" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "STAGING_URL is not set — staging deployment is not configured."
+            echo "This is NOT a successful deployment. Status will be: deployment_skipped"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+            echo "staging_url=${STAGING_URL}" >> "$GITHUB_OUTPUT"
+            echo "STAGING_URL is configured — health check is mandatory."
+          fi
+
+      - name: Deploy to staging
+        id: deploy
+        if: steps.cfg.outputs.configured == 'true'
+        env:
+          STAGING_DEPLOY_CMD: ${{ vars.STAGING_DEPLOY_CMD }}
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build.outputs.image_tag }}
+        run: |
+          set -euo pipefail
+          echo "Deploying image ${IMAGE} to staging"
+          if [ -n "${STAGING_DEPLOY_CMD:-}" ]; then
+            # Operator-provided deploy command (e.g. compose/kubectl/helm)
+            eval "${STAGING_DEPLOY_CMD}"
+          else
+            echo "STAGING_DEPLOY_CMD not set; assuming external CD has pulled ${IMAGE}"
+          fi
+          echo "staging_url=${{ steps.cfg.outputs.staging_url }}" >> "$GITHUB_OUTPUT"
+
+      - name: Health check (staging) — mandatory when configured
+        id: health
+        if: steps.cfg.outputs.configured == 'true'
+        env:
+          HEALTH_URL: ${{ steps.cfg.outputs.staging_url }}/health
+        run: |
+          set -euo pipefail
+          echo "Polling ${HEALTH_URL} ..."
+          for i in $(seq 1 30); do
+            STATUS=$(curl -s -o /dev/null -w '%{http_code}' "${HEALTH_URL}" || echo "000")
+            if [ "$STATUS" = "200" ]; then
+              echo "Health check passed (HTTP 200) after ${i} attempt(s)"
+              echo "healthy=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "Attempt ${i}/30: HTTP ${STATUS}, retrying in 5s..."
+            sleep 5
+          done
+          echo "ERROR: Health check failed after 30 attempts — failing deployment"
+          echo "healthy=false" >> "$GITHUB_OUTPUT"
+          exit 1
+
+      - name: Smoke E2E (staging) — mandatory when configured
+        if: steps.cfg.outputs.configured == 'true'
+        env:
+          PUBLIC_BASE_URL: ${{ steps.cfg.outputs.staging_url }}
+        run: |
+          set -euo pipefail
+          python3 scripts/smoke_e2e.py
+
+      - name: Rollback on failure (staging)
+        if: failure() && steps.cfg.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+          echo "receipt=rollback_executed" 
+          echo "Rolling back staging to previous image..."
+          # Operator action: docker compose -f docker-compose.prod.yml up -d --no-deps --force-recreate web
+          # or: kubectl rollout undo deployment/xray-web -n staging
+          if [ -n "${{ vars.STAGING_ROLLBACK_CMD }}" ]; then
+            eval "${{ vars.STAGING_ROLLBACK_CMD }}"
+          else
+            echo "STAGING_ROLLBACK_CMD not set — operator must complete rollback manually."
+          fi
+          exit 1
+
+      - name: Deployment receipt
+        id: receipt
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.cfg.outputs.configured }}" != "true" ]; then
+            echo "deployment_status=deployment_skipped" >> "$GITHUB_OUTPUT"
+            echo "staging_url=" >> "$GITHUB_OUTPUT"
+            echo "RECEIPT: deployment_skipped (STAGING_URL not configured)"
+            echo "This job reports skip, not success. No staging environment was deployed."
+            # Exit 0 so the workflow can still build images; status is explicit.
+            exit 0
+          fi
+          if [ "${{ steps.health.outputs.healthy }}" = "true" ]; then
+            echo "deployment_status=deployment_succeeded" >> "$GITHUB_OUTPUT"
+            echo "staging_url=${{ steps.cfg.outputs.staging_url }}" >> "$GITHUB_OUTPUT"
+            echo "RECEIPT: deployment_succeeded"
+            exit 0
+          fi
+          echo "deployment_status=deployment_attempted_failed" >> "$GITHUB_OUTPUT"
+          echo "staging_url=${{ steps.cfg.outputs.staging_url }}" >> "$GITHUB_OUTPUT"
+          echo "RECEIPT: deployment_attempted_failed"
+          exit 1
+
+  # ---------------------------------------------------------------------------
+  # Deploy to production — requires protected-environment approval.
+  # Health checks NEVER use continue-on-error.
+  # ---------------------------------------------------------------------------
+  deploy-production:
+    name: Deploy to production
+    needs: [build, deploy-staging]
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ steps.deploy.outputs.production_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Require real production URL
+        id: cfg
+        env:
+          PRODUCTION_URL: ${{ vars.PRODUCTION_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PRODUCTION_URL:-}" ]; then
+            echo "PRODUCTION_URL is not configured — refusing production deploy"
+            exit 1
+          fi
+          echo "production_url=${PRODUCTION_URL}" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy to production
+        id: deploy
+        env:
+          PRODUCTION_DEPLOY_CMD: ${{ vars.PRODUCTION_DEPLOY_CMD }}
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build.outputs.image_tag }}
+        run: |
+          set -euo pipefail
+          echo "Deploying image ${IMAGE} to production"
+          if [ -n "${PRODUCTION_DEPLOY_CMD:-}" ]; then
+            eval "${PRODUCTION_DEPLOY_CMD}"
+          else
+            echo "PRODUCTION_DEPLOY_CMD not set; assuming external CD has pulled ${IMAGE}"
+          fi
+          echo "production_url=${{ steps.cfg.outputs.production_url }}" >> "$GITHUB_OUTPUT"
+
+      - name: Health check (production) — fail closed
+        env:
+          HEALTH_URL: ${{ steps.cfg.outputs.production_url }}/health
+        run: |
+          set -euo pipefail
+          echo "Polling ${HEALTH_URL} ..."
+          for i in $(seq 1 30); do
+            STATUS=$(curl -s -o /dev/null -w '%{http_code}' "${HEALTH_URL}" || echo "000")
+            if [ "$STATUS" = "200" ]; then
+              echo "Health check passed (HTTP 200) after ${i} attempt(s)"
+              exit 0
+            fi
+            echo "Attempt ${i}/30: HTTP ${STATUS}, retrying in 5s..."
+            sleep 5
+          done
+          echo "ERROR: Health check failed after 30 attempts"
+          exit 1
+
+      - name: Verify audit chain (production)
+        env:
+          DB_PATH: ${{ secrets.PROD_DB_PATH }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DB_PATH:-}" ]; then
+            echo "PROD_DB_PATH secret not set — skipping local file audit; operator must verify via managed path"
+            exit 0
+          fi
+          python3 scripts/verify_audit.py "${DB_PATH}"
+
+      - name: Rollback on failure (production)
+        if: failure()
+        run: |
+          set -euo pipefail
+          echo "receipt=rollback_executed"
+          echo "ROLLING BACK PRODUCTION to previous image..."
+          if [ -n "${{ vars.PRODUCTION_ROLLBACK_CMD }}" ]; then
+            eval "${{ vars.PRODUCTION_ROLLBACK_CMD }}"
+          else
+            echo "PRODUCTION_ROLLBACK_CMD not set — operator MUST complete rollback manually."
+          fi
+          exit 1

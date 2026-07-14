@@ -32,53 +32,165 @@ DB_PATH = Path(os.getenv('DB_PATH', str(ROOT / 'data/project_xray.db')))
 IS_POSTGRES = bool(DATABASE_URL)
 
 _pool = None
+_pool_lock = __import__('threading').Lock()
 
 
 def _get_pool():
+    """Thread-safe lazy initialization of the PostgreSQL connection pool."""
     global _pool
-    if _pool is None and HAS_PSYCOPG2:
-        _pool = pg_pool.ThreadedConnectionPool(
-            minconn=2,
-            maxconn=int(os.getenv('DB_POOL_MAX', '10')),
-            dsn=DATABASE_URL,
-            cursor_factory=RealDictCursor,
-        )
+    if _pool is not None:
+        return _pool
+    with _pool_lock:
+        if _pool is None and HAS_PSYCOPG2 and DATABASE_URL:
+            _pool = pg_pool.ThreadedConnectionPool(
+                minconn=2,
+                maxconn=int(os.getenv('DB_POOL_MAX', '10')),
+                dsn=DATABASE_URL,
+                cursor_factory=RealDictCursor,
+            )
     return _pool
 
 
 def _convert_sql(query):
-    """Convert SQLite-style ? placeholders to PostgreSQL %s."""
+    """Convert SQLite-style ? placeholders to PostgreSQL %s.
+
+    Replaces bind-parameter ``?`` tokens only. Question marks inside:
+
+    - single-quoted string literals (with '' escape)
+    - double-quoted identifiers
+    - PostgreSQL dollar-quoted strings ($$...$$ / $tag$...$tag$)
+    - line comments (-- ...)
+    - block comments (/* ... */)
+
+    are left unchanged. Unclosed quotes/comments remain deterministic:
+    the remainder of the query stays in that mode and is not converted.
+    """
     if not IS_POSTGRES:
         return query
-    # Replace ? with %s but not inside string literals
+    if not isinstance(query, str):
+        return query
+
     result = []
-    in_string = False
-    quote_char = None
     i = 0
-    while i < len(query):
+    n = len(query)
+    # modes: code | sq | dq | dollar | line_comment | block_comment
+    mode = 'code'
+    dollar_tag = None
+
+    while i < n:
         ch = query[i]
-        if in_string:
+
+        if mode == 'sq':
             result.append(ch)
-            if ch == quote_char:
-                # Check for escaped quote
-                if i + 1 < len(query) and query[i + 1] == quote_char:
+            if ch == "'":
+                if i + 1 < n and query[i + 1] == "'":
                     result.append(query[i + 1])
                     i += 2
                     continue
-                in_string = False
+                mode = 'code'
             i += 1
-        else:
-            if ch in ("'", '"'):
-                in_string = True
-                quote_char = ch
-                result.append(ch)
-                i += 1
-            elif ch == '?':
+            continue
+
+        if mode == 'dq':
+            result.append(ch)
+            if ch == '"':
+                if i + 1 < n and query[i + 1] == '"':
+                    result.append(query[i + 1])
+                    i += 2
+                    continue
+                mode = 'code'
+            i += 1
+            continue
+
+        if mode == 'dollar':
+            # Look for closing $tag$
+            if ch == '$' and query.startswith(dollar_tag, i):
+                result.append(dollar_tag)
+                i += len(dollar_tag)
+                mode = 'code'
+                dollar_tag = None
+                continue
+            result.append(ch)
+            i += 1
+            continue
+
+        if mode == 'line_comment':
+            result.append(ch)
+            if ch == '\n':
+                mode = 'code'
+            i += 1
+            continue
+
+        if mode == 'block_comment':
+            if ch == '*' and i + 1 < n and query[i + 1] == '/':
+                result.append('*/')
+                i += 2
+                mode = 'code'
+                continue
+            result.append(ch)
+            i += 1
+            continue
+
+        # mode == 'code'
+        if ch == "'":
+            mode = 'sq'
+            result.append(ch)
+            i += 1
+            continue
+        if ch == '"':
+            mode = 'dq'
+            result.append(ch)
+            i += 1
+            continue
+        if ch == '-' and i + 1 < n and query[i + 1] == '-':
+            mode = 'line_comment'
+            result.append('--')
+            i += 2
+            continue
+        if ch == '/' and i + 1 < n and query[i + 1] == '*':
+            mode = 'block_comment'
+            result.append('/*')
+            i += 2
+            continue
+        if ch == '$':
+            # Dollar-quote start: $$ or $tag$
+            m = re.match(r'\$([A-Za-z_][A-Za-z0-9_]*)?\$', query[i:])
+            if m:
+                dollar_tag = m.group(0)
+                result.append(dollar_tag)
+                i += len(dollar_tag)
+                mode = 'dollar'
+                continue
+            result.append(ch)
+            i += 1
+            continue
+        if ch == '?':
+            result.append('%s')
+            i += 1
+            continue
+        # Escape bare % for psycopg2, but preserve existing pyformat tokens:
+        # %%, %s, and %(name)s must pass through unchanged so native PG SQL works.
+        if ch == '%':
+            rest = query[i:]
+            if rest.startswith('%%'):
+                result.append('%%')
+                i += 2
+                continue
+            if rest.startswith('%s'):
                 result.append('%s')
-                i += 1
-            else:
-                result.append(ch)
-                i += 1
+                i += 2
+                continue
+            m = re.match(r'%\([A-Za-z_][A-Za-z0-9_]*\)s', rest)
+            if m:
+                result.append(m.group(0))
+                i += len(m.group(0))
+                continue
+            result.append('%%')
+            i += 1
+            continue
+        result.append(ch)
+        i += 1
+
     return ''.join(result)
 
 
