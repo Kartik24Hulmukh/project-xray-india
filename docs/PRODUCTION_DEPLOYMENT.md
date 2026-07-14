@@ -6,13 +6,18 @@ The v0.3 service fails startup when production controls are absent. Dashboard vi
 
 Set `APP_ENV=production`. Bearer bootstrap tokens are ignored in production. An identity-aware gateway must perform OIDC authentication and MFA, then send:
 
-- `X-Auth-Subject`: stable IdP subject identifier.
-- `X-Auth-Roles`: one of `admin`, `reviewer`, or `scanner`.
-- `X-Auth-MFA: true`.
-- `X-Auth-Timestamp`: current Unix timestamp.
-- `X-Auth-Signature`: HMAC-SHA256 of `subject|roles|mfa|timestamp` using `OIDC_PROXY_SECRET`.
+- `X-Auth-Subject`: stable IdP subject identifier (1–200 chars; letters, digits, `._:@+/-` only).
+- `X-Auth-Roles`: exactly one of `admin`, `reviewer`, or `scanner` after normalization.
+  - Zero recognized roles: deny.
+  - More than one distinct recognized role: deny as ambiguous (no first-role wins).
+  - Duplicates of the same role collapse to one.
+  - Unknown roles never grant access and fail closed even if mixed with a known role.
+- `X-Auth-MFA: true` (required).
+- `X-Auth-Timestamp`: current Unix timestamp (default max age 90s; override with `OIDC_MAX_AGE_SECONDS`).
+- `X-Auth-Nonce` (recommended): unique per request so multi-call sessions are not treated as replays.
+- `X-Auth-Signature`: HMAC-SHA256 of `subject|roles|mfa|timestamp` or `subject|roles|mfa|timestamp|nonce` when nonce is present, using `OIDC_PROXY_SECRET`.
 
-Assertions older than 90 seconds, missing MFA, invalid signatures, or unknown roles fail closed. The gateway-to-app network must be private and must strip client-supplied `X-Auth-*` headers.
+Assertions older than max age, missing MFA, invalid signatures, missing/ambiguous roles, invalid subject format, or **replayed signatures** fail closed. The gateway-to-app network must be private and must strip client-supplied `X-Auth-*` headers.
 
 ## Required production configuration
 

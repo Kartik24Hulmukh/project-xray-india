@@ -73,16 +73,24 @@ def call(base_url, path, method='GET', body=None, headers=None):
 
 def auth_headers(role, subject, secret, action='request'):
     stamp = str(int(time.time()))
-    nonce = str(time.time_ns())
+    nonce = f'{action}-{time.time_ns()}'
     headers = {
         'Content-Type': 'application/json',
         'X-Auth-Subject': subject,
         'X-Auth-Roles': role,
         'X-Auth-MFA': 'true',
         'X-Auth-Timestamp': stamp,
+        'X-Auth-Nonce': nonce,
         'Idempotency-Key': f'{role}-{subject}-{action}-{nonce}',
     }
-    headers['X-Auth-Signature'] = proxy_signature(headers['X-Auth-Subject'], headers['X-Auth-Roles'], headers['X-Auth-MFA'], stamp, secret)
+    headers['X-Auth-Signature'] = proxy_signature(
+        headers['X-Auth-Subject'],
+        headers['X-Auth-Roles'],
+        headers['X-Auth-MFA'],
+        stamp,
+        secret,
+        nonce=nonce,
+    )
     return headers
 
 
