@@ -2,6 +2,9 @@
 # The gateway is an OIDC proxy that must reach external identity providers
 # (Google, Microsoft, etc.) over HTTPS. Provider IPs are dynamic and cannot
 # be pinned to a CIDR list. Egress is restricted to TCP/443 only.
-# This ignore targets exactly one rule on one resource in one file.
-- id: AWS-0104
-  path: infra/aws-controlled-beta/network.tf
+# This ignore targets exactly one rule on one file.
+misconfigurations:
+  - id: AWS-0104
+    paths:
+      - "infra/aws-controlled-beta/network.tf"
+    statement: Gateway OIDC proxy requires HTTPS egress to external identity providers with dynamic IPs. Egress restricted to TCP/443 only.
