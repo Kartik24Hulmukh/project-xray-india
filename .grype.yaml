@@ -5,19 +5,16 @@
 
 ignore:
   - vulnerability: CVE-2026-11940
-    fix-state: unknown
     package:
       name: python
       version: 3.13.14
       type: binary
   - vulnerability: CVE-2026-15308
-    fix-state: unknown
     package:
       name: python
       version: 3.13.14
       type: binary
   - vulnerability: CVE-2026-11972
-    fix-state: unknown
     package:
       name: python
       version: 3.13.14
