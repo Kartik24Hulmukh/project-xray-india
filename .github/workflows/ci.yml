@@ -16,6 +16,12 @@ jobs:
           cache: pip
       - name: Install Python dependencies
         run: python3 -m pip install --requirement requirements.txt
+      - name: Setup Node
+        uses: actions/setup-node@cdca7365b2dadb8f86be6bf9e80b7c93a7c4457d
+        with:
+          node-version: '20'
+      - name: Install Node dependencies
+        run: npm install
       - name: Unit and integration tests
         run: python3 -m unittest discover -s tests -v
       - name: Repository security contracts
@@ -58,7 +64,19 @@ jobs:
           python-version: '3.13'
           cache: pip
       - run: python3 -m pip install --requirement requirements.txt
-      - name: Apply schema
-        run: python3 scripts/apply_postgres_schema.py
+      - name: Apply PostgreSQL schema
+        run: |
+          python3 - <<'PY'
+          import os, psycopg2
+          from pathlib import Path
+          url = os.environ['DATABASE_URL']
+          schema = Path('db/schema_postgres.sql').read_text()
+          conn = psycopg2.connect(url)
+          conn.autocommit = True
+          cur = conn.cursor()
+          cur.execute(schema)
+          cur.close(); conn.close()
+          print('schema applied')
+          PY
       - name: Live PostgreSQL tests
         run: python3 -m unittest tests.test_postgres_live -v
