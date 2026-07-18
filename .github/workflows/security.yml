@@ -50,3 +50,10 @@ jobs:
         run: docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "anchore/grype@$DIGEST" project-xray:security-${GITHUB_SHA} --fail-on high
       - name: Record SBOM digest
         run: sha256sum sbom.cdx.json | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: sbom-cyclonedx-${{ github.sha }}
+          path: sbom.cdx.json
+          retention-days: 30
+          if-no-files-found: error

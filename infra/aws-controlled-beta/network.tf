@@ -20,7 +20,7 @@ resource "aws_subnet" "app" {
   vpc_id                  = aws_vpc.main.id
   cidr_block              = each.value.cidr
   availability_zone       = each.value.az
-  map_public_ip_on_launch = true
+  map_public_ip_on_launch = false
   tags = { Name = "${local.name}-app-${each.key}" }
 }
 
@@ -111,6 +111,10 @@ resource "aws_vpc_security_group_egress_rule" "gateway_app" {
   to_port                      = 8081
 }
 resource "aws_vpc_security_group_egress_rule" "gateway_https" {
+  #trivy:ignore:AWS-0104
+  # Gateway OIDC proxy requires HTTPS egress to external identity providers
+  # (Google, Microsoft, etc.). Provider IPs are dynamic and a fixed CIDR list
+  # is not feasible. Egress is restricted to TCP/443 only.
   security_group_id = aws_security_group.gateway.id
   cidr_ipv4         = "0.0.0.0/0"
   ip_protocol       = "tcp"
@@ -123,13 +127,6 @@ resource "aws_vpc_security_group_ingress_rule" "app_from_gateway" {
   ip_protocol                  = "tcp"
   from_port                    = 8081
   to_port                      = 8081
-}
-resource "aws_vpc_security_group_egress_rule" "app_https" {
-  security_group_id = aws_security_group.app.id
-  cidr_ipv4         = "0.0.0.0/0"
-  ip_protocol       = "tcp"
-  from_port         = 443
-  to_port           = 443
 }
 resource "aws_vpc_security_group_egress_rule" "app_db" {
   security_group_id            = aws_security_group.app.id
