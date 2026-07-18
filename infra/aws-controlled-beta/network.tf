@@ -110,10 +110,10 @@ resource "aws_vpc_security_group_egress_rule" "gateway_app" {
   from_port                    = 8081
   to_port                      = 8081
 }
-#trivy:ignore:AWS-0104
 # Gateway OIDC proxy requires HTTPS egress to external identity providers
 # (Google, Microsoft, etc.). Provider IPs are dynamic and a fixed CIDR list
 # is not feasible. Egress is restricted to TCP/443 only.
+# The narrow ignore is in .trivyignore.yaml targeting only AWS-0104 on this file.
 resource "aws_vpc_security_group_egress_rule" "gateway_https" {
   security_group_id = aws_security_group.gateway.id
   cidr_ipv4         = "0.0.0.0/0"
