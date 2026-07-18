@@ -1,4 +1,4 @@
-name: security
+name: Security
 on:
   push:
     branches: [main]
@@ -6,35 +6,47 @@ on:
 permissions:
   contents: read
 jobs:
-  baseline:
+  blocking-security:
+    name: blocking-security
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38
         with:
           python-version: '3.13'
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - run: npm install
-      - run: npx playwright install --with-deps chromium
-      - run: python3 scripts/check_release.py
-      - run: python3 scripts/readiness_status.py || true
-      - name: Scan repository for committed secrets
+          cache: pip
+      - name: Require immutable scanner images
+        env:
+          GITLEAKS_DIGEST: ${{ vars.GITLEAKS_IMAGE_DIGEST }}
+          TRIVY_DIGEST: ${{ vars.TRIVY_IMAGE_DIGEST }}
+          SYFT_DIGEST: ${{ vars.SYFT_IMAGE_DIGEST }}
+          GRYPE_DIGEST: ${{ vars.GRYPE_IMAGE_DIGEST }}
         run: |
           set -euo pipefail
-          GITLEAKS_VERSION="v8.30.1"
-          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION#v}_linux_x64.tar.gz" -o /tmp/gitleaks.tar.gz
-          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
-          chmod +x /tmp/gitleaks
-          /tmp/gitleaks detect --source . --config .gitleaks.toml --verbose --redact --no-banner
-      - name: Generate Python SBOM
-        uses: anchore/sbom-action@v0
-        with:
-          path: .
-          format: cyclonedx-json
-          output-file: sbom.cdx.json
-      - uses: actions/upload-artifact@v4
-        with:
-          name: sbom
-          path: sbom.cdx.json
+          for value in "$GITLEAKS_DIGEST" "$TRIVY_DIGEST" "$SYFT_DIGEST" "$GRYPE_DIGEST"; do
+            [[ "$value" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo 'scanner image digest is missing or invalid'; exit 1; }
+          done
+      - name: Secret scan
+        env:
+          DIGEST: ${{ vars.GITLEAKS_IMAGE_DIGEST }}
+        run: docker run --rm -v "$PWD:/repo" "ghcr.io/gitleaks/gitleaks@$DIGEST" detect --source /repo --config /repo/.gitleaks.toml --redact --no-banner
+      - name: Dependency and IaC scan
+        env:
+          DIGEST: ${{ vars.TRIVY_IMAGE_DIGEST }}
+        run: docker run --rm -v "$PWD:/repo" "aquasec/trivy@$DIGEST" fs --exit-code 1 --severity HIGH,CRITICAL --scanners vuln,misconfig,secret /repo
+      - name: Licence policy scan
+        env:
+          DIGEST: ${{ vars.TRIVY_IMAGE_DIGEST }}
+        run: docker run --rm -v "$PWD:/repo" "aquasec/trivy@$DIGEST" fs --exit-code 1 --severity HIGH,CRITICAL --scanners license --license-full /repo
+      - name: Build candidate image
+        run: docker build --pull --tag project-xray:security-${GITHUB_SHA} .
+      - name: Generate SBOM
+        env:
+          DIGEST: ${{ vars.SYFT_IMAGE_DIGEST }}
+        run: docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD:/out" "anchore/syft@$DIGEST" project-xray:security-${GITHUB_SHA} -o cyclonedx-json=/out/sbom.cdx.json
+      - name: Scan candidate image
+        env:
+          DIGEST: ${{ vars.GRYPE_IMAGE_DIGEST }}
+        run: docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "anchore/grype@$DIGEST" project-xray:security-${GITHUB_SHA} --fail-on high
+      - name: Record SBOM digest
+        run: sha256sum sbom.cdx.json | tee -a "$GITHUB_STEP_SUMMARY"

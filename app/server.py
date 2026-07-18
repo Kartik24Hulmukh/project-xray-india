@@ -16,16 +16,18 @@ from urllib.parse import parse_qs, urlparse
 
 try:
     from app.audit import append as append_audit, verify as verify_audit
+    from app.capabilities import CapabilityPolicy, denial_reason
     from app.database import connect, db, IS_POSTGRES, IntegrityError, get_schema_version, set_schema_version, table_exists, integrity_check
     from app.operations import send_alert
-    from app.security import token_hash, verify_proxy
-    from app.storage import verify_managed_object
+    from app.security import token_hash, verify_gateway_assertion, verify_proxy
+    from app.storage import settings_from_env, verify_managed_object
 except ModuleNotFoundError:
     from audit import append as append_audit, verify as verify_audit
+    from capabilities import CapabilityPolicy, denial_reason
     from database import connect, db, IS_POSTGRES, IntegrityError, get_schema_version, set_schema_version, table_exists, integrity_check
     from operations import send_alert
-    from security import token_hash, verify_proxy
-    from storage import verify_managed_object
+    from security import token_hash, verify_gateway_assertion, verify_proxy
+    from storage import settings_from_env, verify_managed_object
 
 ROOT = Path(__file__).resolve().parents[1]
 DB = Path(os.getenv('DB_PATH', str(ROOT / 'data/project_xray.db')))
@@ -67,6 +69,16 @@ def metrics_snapshot():
 TOKEN_PEPPER = os.getenv('TOKEN_PEPPER', 'development-token-pepper-not-for-production')
 AUDIT_KEY = os.getenv('AUDIT_HMAC_KEY', 'development-audit-key-not-for-production')
 OIDC_SECRET = os.getenv('OIDC_PROXY_SECRET', '')
+GATEWAY_ASSERTION_VERSION = os.getenv(
+    'GATEWAY_ASSERTION_VERSION', '1' if ENV == 'production' else 'legacy'
+)
+GATEWAY_ASSERTION_AUDIENCE = os.getenv('GATEWAY_ASSERTION_AUDIENCE', '')
+GATEWAY_ASSERTION_ISSUERS = frozenset(
+    value.strip()
+    for value in os.getenv('GATEWAY_ASSERTION_ISSUERS', '').split(',')
+    if value.strip()
+)
+GATEWAY_ASSERTION_KEY_ID = os.getenv('GATEWAY_ASSERTION_KEY_ID', '')
 BACKUP_KEY = os.getenv('BACKUP_HMAC_KEY', '')
 ADMIN_TOKEN = os.getenv('ADMIN_TOKEN', 'change-before-deploy')
 REVIEWER_TOKENS = {
@@ -143,17 +155,26 @@ def bootstrap(c, principal, role, secret, ttl=86400):
 
 
 def init():
+    capability_policy = CapabilityPolicy.from_mapping(os.environ)
+    if not capability_policy.valid:
+        raise RuntimeError('invalid operational capability configuration')
     if ENV == 'production':
+        # A complete static credential pair remains supported for non-AWS
+        # S3-compatible storage.  If both are absent, botocore resolves the
+        # AWS default chain (including ECS task-role credentials).
+        settings_from_env()
         required = [
             ('PUBLIC_BASE_URL', PUBLIC_BASE_URL.startswith('https://')),
             ('TOKEN_PEPPER', len(TOKEN_PEPPER) >= 32),
             ('AUDIT_HMAC_KEY', len(AUDIT_KEY) >= 32),
             ('BACKUP_HMAC_KEY', len(BACKUP_KEY) >= 32),
             ('OIDC_PROXY_SECRET', len(OIDC_SECRET) >= 32),
+            ('GATEWAY_ASSERTION_VERSION', GATEWAY_ASSERTION_VERSION == '1'),
+            ('GATEWAY_ASSERTION_AUDIENCE', bool(GATEWAY_ASSERTION_AUDIENCE)),
+            ('GATEWAY_ASSERTION_ISSUERS', bool(GATEWAY_ASSERTION_ISSUERS)),
+            ('GATEWAY_ASSERTION_KEY_ID', bool(GATEWAY_ASSERTION_KEY_ID)),
             ('OBJECT_STORAGE_MODE', os.getenv('OBJECT_STORAGE_MODE') == 'managed'),
             ('STORAGE_BUCKET', bool(os.getenv('STORAGE_BUCKET'))),
-            ('STORAGE_ACCESS_KEY', bool(os.getenv('STORAGE_ACCESS_KEY'))),
-            ('STORAGE_SECRET_KEY', bool(os.getenv('STORAGE_SECRET_KEY'))),
             ('MONITORING_WEBHOOK_URL', bool(os.getenv('MONITORING_WEBHOOK_URL'))),
             ('MONITORING_WEBHOOK_SECRET', len(os.getenv('MONITORING_WEBHOOK_SECRET', '')) >= 32),
         ]
@@ -187,7 +208,15 @@ def audit(c, actor, action, typ, oid, detail=''):
 
 def auth(headers):
     if ENV == 'production':
-        return verify_proxy(headers, OIDC_SECRET)
+        if GATEWAY_ASSERTION_VERSION != '1':
+            return (None, None)
+        result = verify_gateway_assertion(
+            headers,
+            {GATEWAY_ASSERTION_KEY_ID: OIDC_SECRET},
+            GATEWAY_ASSERTION_AUDIENCE,
+            GATEWAY_ASSERTION_ISSUERS,
+        )
+        return result or (None, None)
     raw = headers.get('Authorization', '')
     token = raw[7:] if raw.startswith('Bearer ') else ''
     if not token:
@@ -353,7 +382,7 @@ def evidence_envelope_from_claim(claim):
         'derivation': {
             'kind': 'snapshot',
             'tool': 'project-xray',
-            'version': '0.4.1',
+            'version': '0.4.4',
             'parent_sha256': None,
         },
         'anchors': [anchor_from_claim(claim)],
@@ -420,7 +449,7 @@ class H(BaseHTTPRequestHandler):
             )
         )
 
-    def common(self, code, ctype):
+    def common(self, code, ctype, extra_headers=None):
         self.send_response(code)
         self.send_header('Content-Type', ctype)
         self.send_header('X-Content-Type-Options', 'nosniff')
@@ -433,12 +462,14 @@ class H(BaseHTTPRequestHandler):
         )
         self.send_header('Cache-Control', 'no-store')
         self.send_header('X-Request-ID', self.request_id)
+        for name, value in (extra_headers or {}).items():
+            self.send_header(name, value)
         if PUBLIC_BASE_URL.startswith('https://'):
             self.send_header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
         self.end_headers()
         self._xray_headers_sent = True
 
-    def out(self, obj, code=200):
+    def out(self, obj, code=200, extra_headers=None):
         if code >= 400:
             _metric_inc('errors')
         body = json.dumps(obj, ensure_ascii=False, separators=(',', ':'))
@@ -449,8 +480,38 @@ class H(BaseHTTPRequestHandler):
                     "UPDATE idempotency_keys SET state='completed',response_code=?,response_body=?,completed_at=? WHERE principal=? AND key=?",
                     (code, body, now(), self.idem[0], self.idem[1]),
                 )
-        self.common(code, 'application/json; charset=utf-8')
+        self.common(code, 'application/json; charset=utf-8', extra_headers=extra_headers)
         self.wfile.write(body.encode())
+
+    def capability_guard(self, method, path):
+        policy = CapabilityPolicy.from_mapping(os.environ)
+        reason = denial_reason(policy, method, path, self.headers)
+        if reason is None:
+            return policy
+        print(
+            json.dumps(
+                {
+                    'time': now(),
+                    'level': 'warning',
+                    'event': 'capability_denied',
+                    'request_id': self.request_id,
+                    'method': method,
+                    'path': path,
+                    'reason': reason,
+                },
+                separators=(',', ':'),
+            )
+        )
+        self.out(
+            {
+                'error': 'capability temporarily unavailable',
+                'code': 'capability_temporarily_unavailable',
+                'request_id': self.request_id,
+            },
+            503,
+            extra_headers={'Retry-After': '60'},
+        )
+        return None
 
     def text(self, value, code=200, ctype='text/plain; charset=utf-8'):
         self.common(code, ctype)
@@ -652,19 +713,46 @@ class H(BaseHTTPRequestHandler):
         path = parsed.path
         query = parse_qs(parsed.query)
 
+        capability_policy = self.capability_guard('GET', path)
+        if capability_policy is None:
+            return
+
         if self.limited('GET', path):
             return self.out({'error': 'rate limit exceeded'}, 429)
 
         if path == '/health':
-            return self.out({'status': 'ok', 'time': now(), 'version': '0.4.1'})
+            return self.out({'status': 'ok', 'time': now(), 'version': '0.4.4'})
         if path == '/ready':
+            if not capability_policy.valid or capability_policy.maintenance:
+                return self.out(
+                    {
+                        'status': 'not_ready',
+                        'ready': False,
+                        'capabilities': capability_policy.as_public_dict(),
+                    },
+                    503,
+                )
             try:
                 with db() as c:
                     c.execute('SELECT 1')
                     verify_audit(c, AUDIT_KEY)
-                return self.out({'status': 'ready', 'time': now()})
+                return self.out(
+                    {
+                        'status': 'degraded' if capability_policy.degraded else 'ready',
+                        'ready': True,
+                        'time': now(),
+                        'capabilities': capability_policy.as_public_dict(),
+                    }
+                )
             except Exception:
-                return self.out({'status': 'not_ready'}, 503)
+                return self.out(
+                    {
+                        'status': 'not_ready',
+                        'ready': False,
+                        'capabilities': capability_policy.as_public_dict(),
+                    },
+                    503,
+                )
         if path == '/metrics':
             if not self.principal(('admin',)):
                 return
@@ -786,9 +874,12 @@ class H(BaseHTTPRequestHandler):
 
     def _handle_post(self):
         _metric_inc('requests')
-        _metric_inc('writes')
         path = urlparse(self.path).path
         segments = [x for x in path.split('/') if x]
+
+        if self.capability_guard('POST', path) is None:
+            return
+        _metric_inc('writes')
 
         if self.limited('POST', path):
             return self.out({'error': 'rate limit exceeded'}, 429)
@@ -944,9 +1035,17 @@ class H(BaseHTTPRequestHandler):
                         if not storage_uri.startswith('s3://' + bucket + '/'):
                             return self.out({'error': 'managed storage URI required'}, 400)
                         try:
-                            verify_managed_object(storage_uri, sha256, size)
-                        except Exception as exc:
-                            return self.out({'error': 'managed object verification failed', 'detail': str(exc)}, 409)
+                            verify_managed_object(
+                                storage_uri,
+                                sha256,
+                                size,
+                                require_version=True,
+                            )
+                        except Exception:
+                            # Provider exceptions can contain access-key IDs,
+                            # endpoints or request identifiers.  Keep the
+                            # public failure stable and redacted.
+                            return self.out({'error': 'managed object verification failed'}, 409)
                     document_id = uid('doc')
                     c.execute(
                         'INSERT INTO documents(id,project_id,source_id,filename,media_type,size_bytes,sha256,storage_state,scan_result,storage_uri,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
@@ -1197,5 +1296,5 @@ class H(BaseHTTPRequestHandler):
 
 if __name__ == '__main__':
     init()
-    print(json.dumps({'event': 'startup', 'service': 'project-xray', 'version': '0.4.1', 'port': PORT, 'environment': ENV}))
+    print(json.dumps({'event': 'startup', 'service': 'project-xray', 'version': '0.4.4', 'port': PORT, 'environment': ENV}))
     ThreadingHTTPServer(('0.0.0.0', PORT), H).serve_forever()

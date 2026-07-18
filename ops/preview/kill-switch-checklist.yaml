@@ -1,0 +1,20 @@
+version: 1
+checklist:
+  - id: disable_publication
+    command_or_action: "Set DISABLE_PUBLICATION=true or equivalent feature flag / remove publisher role assignments"
+    expected: "Publish routes fail closed"
+  - id: disable_uploads
+    command_or_action: "Set DISABLE_UPLOADS=true or block intake routes at ALB/WAF"
+    expected: "New evidence intake rejected"
+  - id: read_only_mode
+    command_or_action: "Set READ_ONLY_MODE=true / DISABLE_WRITES=true"
+    expected: "Mutations fail; approved public reads may remain"
+  - id: disable_public_ingress
+    command_or_action: "ALB listener rule to maintenance or ECS desiredCount=0"
+    expected: "Public surface unavailable within 5 minutes"
+  - id: preserve_evidence
+    command_or_action: "Snapshot logs, audit export, RDS snapshot if hosted"
+    expected: "Incident artifacts retained"
+  - id: status_note
+    command_or_action: "Publish transparent pause note"
+    expected: "Users know preview is paused and repository remains reviewable"

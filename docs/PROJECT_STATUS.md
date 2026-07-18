@@ -2,22 +2,25 @@
 
 ## Release label
 
-`alpha` — synthetic fixtures only. No real-case publication, live connector retrieval, or production deployment claim is authorized.
+`controlled_synthetic_preview` — synthetic fixtures and invited evaluation only. No real-case publication, live connector retrieval, or certified production deployment claim is authorized by this package alone.
 
 ## Current milestone
 
-Synthetic-alpha vertical slice: PostgreSQL-shaped evidence workflow, review gate, safe public dossier, exports, and reproducible local verification.
+Monday 20 July 2026 controlled synthetic technical preview package (`v0.4.1-synthetic-preview`).
 
-## Baseline
+## Package inspection snapshot
 
-The verified reference package passed its two tests and release checker. Its readiness report was `0/10`, so no production gate is represented as passed.
+- Unit tests on finalization host: **130 tests OK (6 skipped)**.
+- Operator readiness YAML still records pending/partial target-environment gates.
+- Founders-council packaging pass added launch, legal, ops, metrics, evaluator, and roadmap files.
 
-## Human gates
+## Human gates still required before real use
 
-Named legal, privacy, evidence, security, incident, and operational owners are required before controlled beta or production pilot. Source terms must be reviewed before any automated connector is enabled.
+Named legal, privacy, evidence, security, incident, and operational owners. Source terms and right-of-reply process before real-case publication. Target MFA, storage, restore, and human-alert receipts before production label.
 
 ## Next executable work
 
-1. Replace the reference persistence and API with the synthetic-alpha domain model and policy checks.
-2. Add isolated intake/extraction and public/reviewer experiences.
-3. Verify the full synthetic smoke path, backup/restore, accessibility, and security evidence.
+1. AWS account security + Gumloop plan-only infrastructure.
+2. Cognito gateway + task-role storage + kill-switch verification on target.
+3. Invited synthetic evaluation and independent reproductions.
+4. Only then consider counsel-reviewed narrow pilots.

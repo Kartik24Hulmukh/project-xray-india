@@ -1,0 +1,10 @@
+# Security-sensitive boundaries require explicit owner review.
+/.github/workflows/ @Kartik24Hulmukh
+/infra/ @Kartik24Hulmukh
+/Dockerfile @Kartik24Hulmukh
+/app/security.py @Kartik24Hulmukh
+/app/gateway.py @Kartik24Hulmukh
+/app/alb_gateway.py @Kartik24Hulmukh
+/app/storage.py @Kartik24Hulmukh
+/db/ @Kartik24Hulmukh
+/scripts/ @Kartik24Hulmukh

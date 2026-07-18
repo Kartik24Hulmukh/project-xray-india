@@ -20,11 +20,13 @@ REQUIRED_ENV = {
     'AUDIT_HMAC_KEY': lambda v: isinstance(v, str) and len(v) >= 32,
     'BACKUP_HMAC_KEY': lambda v: isinstance(v, str) and len(v) >= 32,
     'OIDC_PROXY_SECRET': lambda v: isinstance(v, str) and len(v) >= 32,
+    'GATEWAY_ASSERTION_VERSION': lambda v: v == '1',
+    'GATEWAY_ASSERTION_AUDIENCE': lambda v: isinstance(v, str) and bool(v),
+    'GATEWAY_ASSERTION_ISSUERS': lambda v: isinstance(v, str) and v.startswith('https://'),
+    'GATEWAY_ASSERTION_KEY_ID': lambda v: isinstance(v, str) and bool(v),
     'OBJECT_STORAGE_MODE': lambda v: v == 'managed',
-    'STORAGE_ENDPOINT': lambda v: isinstance(v, str) and v.startswith(('http://', 'https://')),
+    'STORAGE_ENDPOINT': lambda v: isinstance(v, str) and (not v or v.startswith(('http://', 'https://'))),
     'STORAGE_BUCKET': lambda v: isinstance(v, str) and bool(v),
-    'STORAGE_ACCESS_KEY': lambda v: isinstance(v, str) and bool(v),
-    'STORAGE_SECRET_KEY': lambda v: isinstance(v, str) and bool(v),
     'MONITORING_WEBHOOK_URL': lambda v: isinstance(v, str) and v.startswith(('http://', 'https://')),
     'MONITORING_WEBHOOK_SECRET': lambda v: isinstance(v, str) and len(v) >= 32,
 }
@@ -52,6 +54,13 @@ def collect(env=None):
         checks.append(file_check(path))
     for name in REQUIRED_ENV:
         checks.append(env_check(name, env))
+    access_key = env.get('STORAGE_ACCESS_KEY', '')
+    secret_key = env.get('STORAGE_SECRET_KEY', '')
+    checks.append({
+        'name': 'env:STORAGE_STATIC_CREDENTIAL_PAIR',
+        'ok': bool(access_key) == bool(secret_key),
+        'value_present': bool(access_key or secret_key),
+    })
     warnings = []
     if shutil.which('docker') is None:
         warnings.append('docker not installed; local rehearsal runs without container orchestration')
@@ -70,6 +79,10 @@ def rehearsal_env_template():
         'AUDIT_HMAC_KEY': 'rehearsal-audit-key-1234567890123456789012',
         'BACKUP_HMAC_KEY': 'rehearsal-backup-key-123456789012345678901',
         'OIDC_PROXY_SECRET': 'rehearsal-oidc-secret-1234567890123456789',
+        'GATEWAY_ASSERTION_VERSION': '1',
+        'GATEWAY_ASSERTION_AUDIENCE': 'project-xray-app',
+        'GATEWAY_ASSERTION_ISSUERS': 'https://cognito-idp.ap-south-1.amazonaws.com/synthetic-rehearsal-pool',
+        'GATEWAY_ASSERTION_KEY_ID': 'rehearsal-key-2026-07',
         'OBJECT_STORAGE_MODE': 'managed',
         'STORAGE_ENDPOINT': 'http://127.0.0.1:9000',
         'STORAGE_BUCKET': 'evidence',

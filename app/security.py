@@ -26,6 +26,11 @@ import time
 from collections import OrderedDict
 from datetime import datetime, timezone
 
+try:
+    from app.gateway import assertion_signature, stable_principal
+except ModuleNotFoundError:
+    from gateway import assertion_signature, stable_principal
+
 RECOGNIZED_ROLES = frozenset({'admin', 'reviewer', 'scanner'})
 _SUBJECT_RE = re.compile(r'^[A-Za-z0-9._:@+/-]{1,200}$')
 _NONCE_RE = re.compile(r'^[A-Za-z0-9._:-]{1,128}$')
@@ -156,6 +161,100 @@ def verify_proxy(headers, secret, max_age=None, allow_replay=False):
             return None
 
     return (role, subject)
+
+
+def _header(headers, name):
+    """Case-insensitive single-value lookup for dict-like header objects."""
+    matches = [
+        str(value)
+        for key, value in headers.items()
+        if str(key).lower() == name.lower()
+    ]
+    return matches[0].strip() if len(matches) == 1 else ''
+
+
+def verify_gateway_assertion(
+    headers,
+    keys,
+    expected_audience,
+    expected_issuers,
+    now_epoch=None,
+    consume_replay=True,
+):
+    """Verify the frozen v1 trusted-gateway assertion.
+
+    Returns ``(role, stable_principal)`` or ``None``.  The upstream ALB JWT
+    must already have been verified by the gateway; this verifies only the
+    gateway-to-application assertion.
+    """
+    fields = {
+        'version': _header(headers, 'X-Auth-Version'),
+        'issuer': _header(headers, 'X-Auth-Issuer'),
+        'subject': _header(headers, 'X-Auth-Subject'),
+        'principal': _header(headers, 'X-Auth-Principal'),
+        'role': _header(headers, 'X-Auth-Role'),
+        'mfa': _header(headers, 'X-Auth-MFA').lower(),
+        'issued_at': _header(headers, 'X-Auth-Issued-At'),
+        'expires_at': _header(headers, 'X-Auth-Expires-At'),
+        'audience': _header(headers, 'X-Auth-Audience'),
+        'nonce': _header(headers, 'X-Auth-Nonce'),
+        'key_id': _header(headers, 'X-Auth-Key-Id'),
+    }
+    signature = _header(headers, 'X-Auth-Signature').lower()
+    if not all(fields.values()) or not signature:
+        return None
+    if fields['version'] != '1' or fields['mfa'] != 'true':
+        return None
+    if fields['issuer'] not in set(expected_issuers):
+        return None
+    if fields['audience'] != expected_audience:
+        return None
+    if fields['role'] not in RECOGNIZED_ROLES:
+        return None
+    if not _SUBJECT_RE.fullmatch(fields['subject']):
+        return None
+    if not _NONCE_RE.fullmatch(fields['nonce']) or len(fields['nonce']) < 16:
+        return None
+    secret = keys.get(fields['key_id']) if isinstance(keys, dict) else None
+    if not secret or len(secret) < 32:
+        return None
+    try:
+        issued_at = int(fields['issued_at'])
+        expires_at = int(fields['expires_at'])
+    except ValueError:
+        return None
+    current = int(time.time()) if now_epoch is None else int(now_epoch)
+    if issued_at > current + 5 or expires_at <= current:
+        return None
+    if expires_at <= issued_at or expires_at - issued_at > 30:
+        return None
+    expected_principal = stable_principal(fields['issuer'], fields['subject'])
+    if not hmac.compare_digest(fields['principal'], expected_principal):
+        return None
+    payload = {
+        'audience': fields['audience'],
+        'expires_at': expires_at,
+        'issued_at': issued_at,
+        'issuer': fields['issuer'],
+        'key_id': fields['key_id'],
+        'mfa': True,
+        'nonce': fields['nonce'],
+        'principal': fields['principal'],
+        'role': fields['role'],
+        'subject': fields['subject'],
+        'version': 1,
+    }
+    try:
+        expected_signature = assertion_signature(payload, secret)
+    except (TypeError, ValueError):
+        return None
+    if not re.fullmatch(r'[0-9a-f]{64}', signature):
+        return None
+    if not hmac.compare_digest(signature, expected_signature):
+        return None
+    if consume_replay and not _remember_assertion(signature, expires_at + 1):
+        return None
+    return fields['role'], fields['principal']
 
 
 def clear_replay_cache():

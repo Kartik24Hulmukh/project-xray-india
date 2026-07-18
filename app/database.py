@@ -15,6 +15,7 @@ import re
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
+from urllib.parse import quote
 
 try:
     import psycopg2
@@ -25,7 +26,40 @@ except ImportError:
     HAS_PSYCOPG2 = False
 
 ROOT = Path(__file__).resolve().parents[1]
-DATABASE_URL = os.getenv('DATABASE_URL', '')
+
+
+def database_url_from_env(env=None):
+    """Build a PostgreSQL DSN from ECS-injected secret fields.
+
+    ``DATABASE_URL`` remains supported for local/container deployments. On
+    ECS, username/password are injected as separate Secrets Manager JSON
+    fields so the complete credential never appears in OpenTofu state.
+    """
+    env = os.environ if env is None else env
+    explicit = str(env.get('DATABASE_URL', '')).strip()
+    if explicit:
+        return explicit
+    required = ('DB_HOST', 'DB_NAME', 'DB_USERNAME', 'DB_PASSWORD')
+    if not all(str(env.get(name, '')).strip() for name in required):
+        return ''
+    host = str(env['DB_HOST']).strip()
+    if any(ch in host for ch in '/?#@'):
+        raise RuntimeError('invalid DB_HOST')
+    port = str(env.get('DB_PORT', '5432')).strip()
+    if not port.isdigit() or not 1 <= int(port) <= 65535:
+        raise RuntimeError('invalid DB_PORT')
+    name = str(env['DB_NAME']).strip()
+    if not re.fullmatch(r'[A-Za-z0-9_-]{1,63}', name):
+        raise RuntimeError('invalid DB_NAME')
+    sslmode = str(env.get('DB_SSLMODE', 'require')).strip()
+    if sslmode not in {'require', 'verify-ca', 'verify-full'}:
+        raise RuntimeError('unsafe DB_SSLMODE')
+    user = quote(str(env['DB_USERNAME']), safe='')
+    password = quote(str(env['DB_PASSWORD']), safe='')
+    return f'postgresql://{user}:{password}@{host}:{port}/{name}?sslmode={sslmode}'
+
+
+DATABASE_URL = database_url_from_env()
 DB_PATH = Path(os.getenv('DB_PATH', str(ROOT / 'data/project_xray.db')))
 
 # Dialect flag
