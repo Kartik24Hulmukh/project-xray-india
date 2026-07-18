@@ -33,7 +33,7 @@ jobs:
       - name: Dependency and IaC scan
         env:
           DIGEST: ${{ vars.TRIVY_IMAGE_DIGEST }}
-        run: docker run --rm -v "$PWD:/repo" "aquasec/trivy@$DIGEST" fs --exit-code 1 --severity HIGH,CRITICAL --scanners vuln,misconfig,secret /repo
+        run: docker run --rm -v "$PWD:/repo" "aquasec/trivy@$DIGEST" fs --exit-code 1 --severity HIGH,CRITICAL --scanners vuln,misconfig,secret --ignorefile .trivyignore.yaml /repo
       - name: Licence policy scan
         env:
           DIGEST: ${{ vars.TRIVY_IMAGE_DIGEST }}
