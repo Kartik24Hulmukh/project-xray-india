@@ -7,33 +7,40 @@ resource "aws_vpc" "main" {
   cidr_block           = "10.20.0.0/16"
   enable_dns_support   = true
   enable_dns_hostnames = true
-  tags = { Name = local.name }
+  tags = { Name = local.name
+  }
 }
 
 resource "aws_internet_gateway" "main" { vpc_id = aws_vpc.main.id }
 
 resource "aws_subnet" "app" {
   for_each = {
-    a = { cidr = "10.20.0.0/24", az = local.azs[0] }
-    b = { cidr = "10.20.1.0/24", az = local.azs[1] }
+    a = { cidr = "10.20.0.0/24", az = local.azs[0]
+    }
+    b = { cidr = "10.20.1.0/24", az = local.azs[1]
+    }
   }
   vpc_id                  = aws_vpc.main.id
   cidr_block              = each.value.cidr
   availability_zone       = each.value.az
   map_public_ip_on_launch = false
-  tags = { Name = "${local.name}-app-${each.key}" }
+  tags = { Name = "${local.name}-app-${each.key}"
+  }
 }
 
 resource "aws_subnet" "db" {
   for_each = {
-    a = { cidr = "10.20.10.0/24", az = local.azs[0] }
-    b = { cidr = "10.20.11.0/24", az = local.azs[1] }
+    a = { cidr = "10.20.10.0/24", az = local.azs[0]
+    }
+    b = { cidr = "10.20.11.0/24", az = local.azs[1]
+    }
   }
   vpc_id                  = aws_vpc.main.id
   cidr_block              = each.value.cidr
   availability_zone       = each.value.az
   map_public_ip_on_launch = false
-  tags = { Name = "${local.name}-db-${each.key}" }
+  tags = { Name = "${local.name}-db-${each.key}"
+  }
 }
 
 resource "aws_route_table" "public" { vpc_id = aws_vpc.main.id }

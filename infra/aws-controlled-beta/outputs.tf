@@ -9,6 +9,8 @@ output "ecs_gateway_service_name" { value = aws_ecs_service.gateway.name }
 output "image_reference" { value = local.image }
 output "cognito_user_pool_id" { value = aws_cognito_user_pool.main.id }
 output "github_plan_role_arn" { value = aws_iam_role.github_plan.arn }
-output "custody_bucket_names" { value = { for k,v in aws_s3_bucket.custody : k => v.id } }
-output "rds_endpoint" { value = aws_db_instance.main.endpoint
-  sensitive = true }
+output "custody_bucket_names" { value = { for k, v in aws_s3_bucket.custody : k => v.id } }
+output "rds_endpoint" {
+  value     = aws_db_instance.main.endpoint
+  sensitive = true
+}

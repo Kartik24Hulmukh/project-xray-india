@@ -22,15 +22,17 @@ def balanced(text):
  return not stack and not quote
 def main():
  files=sorted(IAC.glob('*.tf'));text='\n'.join(p.read_text() for p in files);errors=[]
+ # Normalize whitespace around = for token matching (tofu fmt aligns assignments)
+ norm=re.sub(r'\s*=\s*',' = ',text)
  if len(files)<8:errors.append('expected split OpenTofu stack files')
  for token in REQUIRED:
-  if token not in text:errors.append('missing '+token)
+  if token not in norm:errors.append('missing '+token)
  for token in FORBIDDEN:
   if token in text:errors.append('forbidden '+token)
  if ';' in text:errors.append('semicolon syntax is forbidden')
  if '{{http' in text:errors.append('malformed URL expression')
  if 'aws_security_group.task' in text:errors.append('shared gateway/app task security group is forbidden')
- if 'resource \"aws_iam_role\" \"task\"' in text:errors.append('shared gateway/app task role is forbidden')
+ if 'resource "aws_iam_role" "task"' in text:errors.append('shared gateway/app task role is forbidden')
  if not balanced(text):errors.append('unbalanced HCL delimiters')
  buckets=re.findall(r'"(intake-quarantine|evidence-private|dossier-restricted|publication-staging)"',text)
  if set(buckets)!={'intake-quarantine','evidence-private','dossier-restricted','publication-staging'}:errors.append('four custody roles are incomplete')
