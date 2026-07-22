@@ -15,7 +15,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from app.security import proxy_signature
+from app.gateway import mint_gateway_assertion
 from scripts.preflight_prod_env import collect as collect_preflight
 from scripts.recovery_evidence import collect as collect_recovery_evidence
 
@@ -37,6 +37,7 @@ class StorageHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header('Content-Length', str(item['size_bytes']))
         self.send_header('x-amz-meta-sha256', item['sha256'])
+        self.send_header('x-amz-version-id', item.get('version_id', ''))
         self.end_headers()
 
 
@@ -72,25 +73,20 @@ def call(base_url, path, method='GET', body=None, headers=None):
 
 
 def auth_headers(role, subject, secret, action='request'):
-    stamp = str(int(time.time()))
     nonce = f'{action}-{time.time_ns()}'
-    headers = {
-        'Content-Type': 'application/json',
-        'X-Auth-Subject': subject,
-        'X-Auth-Roles': role,
-        'X-Auth-MFA': 'true',
-        'X-Auth-Timestamp': stamp,
-        'X-Auth-Nonce': nonce,
-        'Idempotency-Key': f'{role}-{subject}-{action}-{nonce}',
-    }
-    headers['X-Auth-Signature'] = proxy_signature(
-        headers['X-Auth-Subject'],
-        headers['X-Auth-Roles'],
-        headers['X-Auth-MFA'],
-        stamp,
-        secret,
+    headers = mint_gateway_assertion(
+        issuer='https://cognito-idp.ap-south-1.amazonaws.com/synthetic-rehearsal-pool',
+        subject=subject,
+        role=role,
+        secret=secret,
+        key_id='rehearsal-key-2026-07',
+        audience='project-xray-app',
         nonce=nonce,
     )
+    headers.update({
+        'Content-Type': 'application/json',
+        'Idempotency-Key': f'{role}-{subject}-{action}-{nonce}',
+    })
     return headers
 
 
@@ -126,18 +122,27 @@ def run():
 
         storage_url = f'http://127.0.0.1:{storage_server.server_address[1]}'
         monitor_url = f'http://127.0.0.1:{monitor_server.server_address[1]}/alerts'
-        StorageHandler.catalog['/evidence/case/fixture.pdf'] = {'sha256': 'a' * 64, 'size_bytes': 128}
+        StorageHandler.catalog['/evidence/case/fixture.pdf?versionId=version-1'] = {
+            'sha256': 'a' * 64,
+            'size_bytes': 128,
+            'version_id': 'version-1',
+        }
 
         env = {
             **os.environ,
             'DB_PATH': str(db_path),
             'PORT': '18140',
             'APP_ENV': 'production',
+            'PRODUCTION_REHEARSAL': '1',
             'PUBLIC_BASE_URL': 'https://project-xray.local',
             'TOKEN_PEPPER': 'rehearsal-token-pepper-12345678901234567890',
             'AUDIT_HMAC_KEY': 'rehearsal-audit-key-1234567890123456789012',
             'BACKUP_HMAC_KEY': 'rehearsal-backup-key-123456789012345678901',
             'OIDC_PROXY_SECRET': 'rehearsal-oidc-secret-1234567890123456789',
+            'GATEWAY_ASSERTION_VERSION': '1',
+            'GATEWAY_ASSERTION_AUDIENCE': 'project-xray-app',
+            'GATEWAY_ASSERTION_ISSUERS': 'https://cognito-idp.ap-south-1.amazonaws.com/synthetic-rehearsal-pool',
+            'GATEWAY_ASSERTION_KEY_ID': 'rehearsal-key-2026-07',
             'OBJECT_STORAGE_MODE': 'managed',
             'STORAGE_ENDPOINT': storage_url,
             'STORAGE_BUCKET': 'evidence',
@@ -180,7 +185,7 @@ def run():
             pid = project[1]['id']
             source = call(base_url, f'/api/projects/{pid}/sources', 'POST', {'publisher': 'Synthetic Publisher', 'url': 'https://example.invalid/rehearsal', 'source_class': 'official', 'retrieved_at': '2026-07-14T00:00:00Z', 'sha256': 'b' * 64, 'passage': 'Synthetic production anchor'}, headers_for(admin_role, 'create-source'))
             sid = source[1]['id']
-            document = call(base_url, f'/api/projects/{pid}/documents', 'POST', {'source_id': sid, 'filename': 'fixture.pdf', 'media_type': 'application/pdf', 'size_bytes': 128, 'sha256': 'a' * 64, 'storage_uri': 's3://evidence/case/fixture.pdf'}, headers_for(admin_role, 'create-document'))
+            document = call(base_url, f'/api/projects/{pid}/documents', 'POST', {'source_id': sid, 'filename': 'fixture.pdf', 'media_type': 'application/pdf', 'size_bytes': 128, 'sha256': 'a' * 64, 'storage_uri': 's3://evidence/case/fixture.pdf?versionId=version-1'}, headers_for(admin_role, 'create-document'))
             did = document[1]['id']
             scan = call(base_url, f'/api/projects/{pid}/documents/{did}/scan', 'POST', {'result': 'clean'}, headers_for(scanner_role, 'scan-document'))
             claim = call(base_url, f'/api/projects/{pid}/claims', 'POST', {'claim_type': 'official_claim', 'text': 'Production rehearsal claim', 'source_id': sid, 'passage': 'Synthetic production anchor'}, headers_for(admin_role, 'create-claim'))

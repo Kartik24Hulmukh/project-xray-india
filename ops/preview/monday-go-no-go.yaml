@@ -1,0 +1,27 @@
+version: 1
+decision: GO-SYNTHETIC-PREVIEW
+mode: controlled_synthetic_technical_preview
+tag: v0.4.1-synthetic-preview
+recorded_at_utc: 2026-07-17T23:08:56Z
+owners:
+  incident: null
+  technical: null
+  security: null
+  editorial: null
+  privacy_legal: null
+hard_gates:
+  - id: frozen_tag
+    status: package_prepared
+  - id: local_unit_tests
+    status: pass_on_package_inspection
+    evidence: "130 tests OK (6 skipped) during package finalization"
+  - id: real_case_publication
+    status: disabled
+  - id: public_uploads
+    status: disabled_recommended
+  - id: known_limitations_published
+    status: pass
+    evidence: docs/KNOWN_LIMITATIONS.md
+notes:
+  - Operator must still complete target-environment receipts before any production label.
+  - Do not claim traction or impact from this decision file.

@@ -48,3 +48,8 @@ Stop feature work immediately if any occur:
 - public PII is exposed;
 - backups cannot restore;
 - the app cannot start from documented instructions.
+
+
+## Monday preview constraint
+
+For the current package tag, do not claim production certification, real-case publication readiness, high traction, or high impact. Prefer fail-closed synthetic evaluation and retain operator gate honesty.

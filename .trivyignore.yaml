@@ -1,0 +1,20 @@
+# Narrow Trivy ignore for gateway OIDC HTTPS egress.
+# The gateway is an OIDC proxy that must reach external identity providers
+# (Google, Microsoft, etc.) over HTTPS. Provider IPs are dynamic and cannot
+# be pinned to a CIDR list. Egress is restricted to TCP/443 only.
+# This ignore targets exactly one rule on one file.
+#
+# AWS-0053: The ALB is intentionally public — it is the entry point for the
+# controlled-beta preview. It is protected by Cognito authenticate-cognito
+# action with TOTP-required MFA, a WAFv2 web ACL with managed rules, and
+# HTTPS-only listener. The internal application container has no direct
+# inbound access. This is not an accidental exposure.
+misconfigurations:
+  - id: AWS-0104
+    paths:
+      - "infra/aws-controlled-beta/network.tf"
+    statement: Gateway OIDC proxy requires HTTPS egress to external identity providers with dynamic IPs. Egress restricted to TCP/443 only.
+  - id: AWS-0053
+    paths:
+      - "infra/aws-controlled-beta/compute.tf"
+    statement: ALB is intentionally public as the entry point. Protected by Cognito authenticate-cognito with TOTP MFA, WAFv2 web ACL, and HTTPS-only listener. Internal app container has no direct inbound access.

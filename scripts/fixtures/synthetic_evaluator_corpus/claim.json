@@ -1,0 +1,18 @@
+{
+  "statement": "SYNTHETIC record states embankment package A listed a completion target of 31 March 2025.",
+  "claim_type": "schedule",
+  "evidence_state": "candidate",
+  "anchor": {
+    "page": 1,
+    "quote": "Completion target: 31 March 2025"
+  },
+  "labels": [
+    "SYNTHETIC"
+  ],
+  "does_not_establish": [
+    "guilt",
+    "corruption",
+    "intent",
+    "illegal conduct"
+  ]
+}

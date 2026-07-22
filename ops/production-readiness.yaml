@@ -1,5 +1,6 @@
 version: 1
-release_label: alpha
+release_label: controlled_synthetic_preview
+# Previous honest ledger label: alpha. No target-environment gate is auto-passed by packaging.
 checks:
   - id: build.clean_clone
     owner: release

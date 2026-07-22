@@ -1,5 +1,34 @@
 # Release notes
 
+## v0.4.4-controlled-preview-rc — council, legal and handoff hardening
+
+- Added an Ed25519 integrity-bound scanner-attestation contract with exact object-version/hash/size binding, freshness, nonce, engine/policy identity and short-read rejection.
+- Added founder-council pre-mortem, India legal/political gates and a 48-hour controlled-preview plan.
+- Added deterministic Gumloop system/chat prompts and no-force-push/no-deploy integration rules.
+- Public uploads and real-case publication remain blocked; AWS and counsel receipts are still required.
+
+## v0.4.3-controlled-beta-rc — AWS boundary and release hardening
+
+- Added an executable ALB/Cognito ES256 gateway with signer, client, issuer, subject, expiry and duplicate-header checks.
+- Added frozen 30-second v1 gateway assertions and server-side exact role binding.
+- Added AWS task-role/default-chain S3 verification with exact object-version binding.
+- Added separate gateway and app ECS services, task roles, ENIs and security groups.
+- Added a plan-only OpenTofu stack for ALB, Cognito TOTP, ECS, RDS, four custody buckets, WAF, monitoring and budgets.
+- Replaced arbitrary-command/tag deployment paths with exact Git SHA, required-check and image-digest gates.
+- Added machine-verifiable same-SHA/same-digest AWS target receipt gates.
+- This remains a release candidate until real AWS staging and production receipts pass.
+
+## v0.4.1-synthetic-preview — controlled synthetic technical preview packaging
+
+- Added launch positioning, known limitations, go/no-go, and founders-council verdict.
+- Added legal disclaimer and privacy/takedown drafts (unsigned).
+- Added stakeholder reaction matrix and kill-switch runbook.
+- Added traction metric definitions without fabricated counts.
+- Added Gumloop/AWS next steps and 90-day roadmap.
+- Added `scripts/external_evaluator.py` and synthetic evaluator fixtures.
+- Aligned README/status language to **controlled synthetic technical preview**.
+- Did **not** fabricate production-environment receipts or design-partner claims.
+
 ## v0.4.1 — production-consistency and PostgreSQL path hardening
 
 - Aligned package/runtime/SBOM version strings to **0.4.1**.

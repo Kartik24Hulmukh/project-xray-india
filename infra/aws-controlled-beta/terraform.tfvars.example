@@ -1,0 +1,19 @@
+environment        = "staging"
+domain_name        = "staging.xray.example.org"
+certificate_arn    = "arn:aws:acm:ap-south-1:111122223333:certificate/REPLACE"
+image_digest       = "sha256:REPLACE_WITH_64_LOWERCASE_HEX"
+notification_email = "ops@example.org"
+github_repository  = "Kartik24Hulmukh/project-xray-india"
+github_oidc_provider_arn = "arn:aws:iam::111122223333:oidc-provider/token.actions.githubusercontent.com"
+cognito_domain_prefix = "project-xray-staging-REPLACE"
+callback_urls = ["https://staging.xray.example.org/oauth2/idpresponse"]
+logout_urls   = ["https://staging.xray.example.org/"]
+gateway_role_bindings_secret_arn = "arn:aws:secretsmanager:ap-south-1:111122223333:secret:REPLACE"
+app_secret_arns = {
+  token_pepper              = "arn:aws:secretsmanager:ap-south-1:111122223333:secret:REPLACE-token"
+  audit_hmac_key            = "arn:aws:secretsmanager:ap-south-1:111122223333:secret:REPLACE-audit"
+  backup_hmac_key           = "arn:aws:secretsmanager:ap-south-1:111122223333:secret:REPLACE-backup"
+  oidc_proxy_secret         = "arn:aws:secretsmanager:ap-south-1:111122223333:secret:REPLACE-oidc"
+  monitoring_webhook_url    = "arn:aws:secretsmanager:ap-south-1:111122223333:secret:REPLACE-monitor-url"
+  monitoring_webhook_secret = "arn:aws:secretsmanager:ap-south-1:111122223333:secret:REPLACE-monitor"
+}

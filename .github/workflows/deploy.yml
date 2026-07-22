@@ -1,285 +1,124 @@
-name: deploy
-
+name: Deploy immutable AWS image
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
     inputs:
       environment:
-        description: 'Target environment (staging or production)'
-        required: true
-        default: 'staging'
         type: choice
-        options:
-          - staging
-          - production
-
+        required: true
+        options: [staging, production]
+      git_sha:
+        description: Exact reviewed 40-character commit SHA
+        required: true
+        type: string
+      image_digest:
+        description: Exact ECR sha256 image digest
+        required: true
+        type: string
 permissions:
   contents: read
-  packages: write
-
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
-
+  checks: read
+  id-token: write
+concurrency:
+  group: deploy-${{ inputs.environment }}
+  cancel-in-progress: false
 jobs:
-  # ---------------------------------------------------------------------------
-  # Gate: require CI success evidence on the same SHA (documented dependency)
-  # ---------------------------------------------------------------------------
-  gate:
-    name: Require CI green
+  deploy:
     runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    env:
+      DEPLOY_ROLE_ARN: ${{ inputs.environment == 'production' && vars.PRODUCTION_DEPLOY_ROLE_ARN || vars.STAGING_DEPLOY_ROLE_ARN }}
+      ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+      ECS_APP_SERVICE: ${{ vars.ECS_APP_SERVICE }}
+      ECS_GATEWAY_SERVICE: ${{ vars.ECS_GATEWAY_SERVICE }}
+      APP_TASK_FAMILY: ${{ vars.ECS_APP_TASK_FAMILY }}
+      GATEWAY_TASK_FAMILY: ${{ vars.ECS_GATEWAY_TASK_FAMILY }}
+      ECR_REPOSITORY_URL: ${{ vars.ECR_REPOSITORY_URL }}
+      PUBLIC_BASE_URL: ${{ vars.PUBLIC_BASE_URL }}
+      EXPECTED_SHA: ${{ inputs.git_sha }}
+      IMAGE_DIGEST: ${{ inputs.image_digest }}
     steps:
-      - name: Record deployment gate
-        run: |
-          echo "receipt=workflow_syntax_validated" >> "$GITHUB_OUTPUT"
-          echo "Deploy workflow requires successful test, PostgreSQL integration, and security jobs on the candidate SHA."
-          echo "Operators must not promote images without green CI for this commit."
-
-  # ---------------------------------------------------------------------------
-  # Build and publish Docker image (shared by staging + production)
-  # ---------------------------------------------------------------------------
-  build:
-    name: Build & push Docker image
-    needs: gate
-    runs-on: ubuntu-latest
-    outputs:
-      image_tag: ${{ steps.meta.outputs.version }}
-      image_digest: ${{ steps.build.outputs.digest }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=sha,format=short
-            type=raw,value=latest,enable={{is_default_branch}}
-
-      - name: Build and push
-        id: build
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          provenance: true
-          sbom: true
-
-  # ---------------------------------------------------------------------------
-  # Deploy to staging — fail closed when STAGING_URL is configured;
-  # explicitly skip (not succeed) when no real staging runtime is configured.
-  # ---------------------------------------------------------------------------
-  deploy-staging:
-    name: Deploy to staging
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: staging
-      url: ${{ steps.receipt.outputs.staging_url }}
-    outputs:
-      deployment_status: ${{ steps.receipt.outputs.deployment_status }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Resolve staging configuration
-        id: cfg
-        env:
-          STAGING_URL: ${{ vars.STAGING_URL }}
-          STAGING_DEPLOY_CMD: ${{ vars.STAGING_DEPLOY_CMD }}
+      - name: Validate immutable inputs
         run: |
           set -euo pipefail
-          if [ -z "${STAGING_URL:-}" ]; then
-            echo "configured=false" >> "$GITHUB_OUTPUT"
-            echo "STAGING_URL is not set — staging deployment is not configured."
-            echo "This is NOT a successful deployment. Status will be: deployment_skipped"
-          else
-            echo "configured=true" >> "$GITHUB_OUTPUT"
-            echo "staging_url=${STAGING_URL}" >> "$GITHUB_OUTPUT"
-            echo "STAGING_URL is configured — health check is mandatory."
-          fi
-
-      - name: Deploy to staging
-        id: deploy
-        if: steps.cfg.outputs.configured == 'true'
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$DEPLOY_ROLE_ARN" =~ ^arn:aws:iam::[0-9]{12}:role/ ]]
+          [[ "$PUBLIC_BASE_URL" =~ ^https:// ]]
+          test -n "$ECS_APP_SERVICE"
+          test -n "$ECS_GATEWAY_SERVICE"
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ inputs.git_sha }}
+          fetch-depth: 1
+      - name: Verify exact checkout and required checks
         env:
-          STAGING_DEPLOY_CMD: ${{ vars.STAGING_DEPLOY_CMD }}
-          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build.outputs.image_tag }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          echo "Deploying image ${IMAGE} to staging"
-          if [ -n "${STAGING_DEPLOY_CMD:-}" ]; then
-            # Operator-provided deploy command (e.g. compose/kubectl/helm)
-            eval "${STAGING_DEPLOY_CMD}"
-          else
-            echo "STAGING_DEPLOY_CMD not set; assuming external CD has pulled ${IMAGE}"
-          fi
-          echo "staging_url=${{ steps.cfg.outputs.staging_url }}" >> "$GITHUB_OUTPUT"
-
-      - name: Health check (staging) — mandatory when configured
-        id: health
-        if: steps.cfg.outputs.configured == 'true'
-        env:
-          HEALTH_URL: ${{ steps.cfg.outputs.staging_url }}/health
-        run: |
-          set -euo pipefail
-          echo "Polling ${HEALTH_URL} ..."
-          for i in $(seq 1 30); do
-            STATUS=$(curl -s -o /dev/null -w '%{http_code}' "${HEALTH_URL}" || echo "000")
-            if [ "$STATUS" = "200" ]; then
-              echo "Health check passed (HTTP 200) after ${i} attempt(s)"
-              echo "healthy=true" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            echo "Attempt ${i}/30: HTTP ${STATUS}, retrying in 5s..."
-            sleep 5
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          CHECKS=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${EXPECTED_SHA}/check-runs" --paginate)
+          for required in unit-and-rehearsal postgres blocking-security; do
+            jq -e --arg name "$required" '[.check_runs[] | select(.name==$name and .conclusion=="success")] | length > 0' <<<"$CHECKS"
           done
-          echo "ERROR: Health check failed after 30 attempts — failing deployment"
-          echo "healthy=false" >> "$GITHUB_OUTPUT"
-          exit 1
-
-      - name: Smoke E2E (staging) — mandatory when configured
-        if: steps.cfg.outputs.configured == 'true'
-        env:
-          PUBLIC_BASE_URL: ${{ steps.cfg.outputs.staging_url }}
+      - name: Obtain short-lived deployment credentials
         run: |
           set -euo pipefail
+          TOKEN_JSON=$(curl --fail --silent --show-error -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com")
+          TOKEN=$(jq -r .value <<<"$TOKEN_JSON")
+          CREDS=$(aws sts assume-role-with-web-identity --role-arn "$DEPLOY_ROLE_ARN" --role-session-name "xray-deploy-${GITHUB_RUN_ID}" --web-identity-token "$TOKEN" --duration-seconds 1800)
+          echo "::add-mask::$(jq -r .Credentials.AccessKeyId <<<"$CREDS")"
+          echo "::add-mask::$(jq -r .Credentials.SecretAccessKey <<<"$CREDS")"
+          echo "::add-mask::$(jq -r .Credentials.SessionToken <<<"$CREDS")"
+          echo "AWS_ACCESS_KEY_ID=$(jq -r .Credentials.AccessKeyId <<<"$CREDS")" >> "$GITHUB_ENV"
+          echo "AWS_SECRET_ACCESS_KEY=$(jq -r .Credentials.SecretAccessKey <<<"$CREDS")" >> "$GITHUB_ENV"
+          echo "AWS_SESSION_TOKEN=$(jq -r .Credentials.SessionToken <<<"$CREDS")" >> "$GITHUB_ENV"
+      - name: Register digest-bound task definitions
+        id: deploy
+        run: |
+          set -euo pipefail
+          PREVIOUS_APP=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_APP_SERVICE" | jq -r '.services[0].taskDefinition')
+          PREVIOUS_GATEWAY=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_GATEWAY_SERVICE" | jq -r '.services[0].taskDefinition')
+          echo "previous_app=$PREVIOUS_APP" >> "$GITHUB_OUTPUT"
+          echo "previous_gateway=$PREVIOUS_GATEWAY" >> "$GITHUB_OUTPUT"
+          IMAGE="$ECR_REPOSITORY_URL@$IMAGE_DIGEST"
+          register_family() {
+            family="$1"
+            container="$2"
+            output="$3"
+            aws ecs describe-task-definition --task-definition "$family" --query taskDefinition > "/tmp/${container}.json"
+            jq --arg image "$IMAGE" --arg container "$container" 'del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.compatibilities,.registeredAt,.registeredBy) | .containerDefinitions |= map(if .name==$container then .image=$image else . end)' "/tmp/${container}.json" > "/tmp/${container}-next.json"
+            aws ecs register-task-definition --cli-input-json "file:///tmp/${container}-next.json" | jq -r '.taskDefinition.taskDefinitionArn' > "$output"
+          }
+          register_family "$APP_TASK_FAMILY" app /tmp/app-arn
+          register_family "$GATEWAY_TASK_FAMILY" gateway /tmp/gateway-arn
+          aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_APP_SERVICE" --task-definition "$(cat /tmp/app-arn)" --force-new-deployment >/tmp/app-deploy.json
+          aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_APP_SERVICE"
+          aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_GATEWAY_SERVICE" --task-definition "$(cat /tmp/gateway-arn)" --force-new-deployment >/tmp/gateway-deploy.json
+          aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_GATEWAY_SERVICE"
+      - name: Verify running digest and endpoint
+        run: |
+          set -euo pipefail
+          verify_service() {
+            service="$1"
+            container="$2"
+            tasks=$(aws ecs list-tasks --cluster "$ECS_CLUSTER" --service-name "$service" --desired-status RUNNING | jq -r '.taskArns[]')
+            test -n "$tasks"
+            described=$(aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks $tasks)
+            jq -e --arg digest "$IMAGE_DIGEST" --arg container "$container" '[.tasks[].containers[] | select(.name==$container) | .imageDigest==$digest] | length > 0 and all' <<<"$described"
+          }
+          verify_service "$ECS_APP_SERVICE" app
+          verify_service "$ECS_GATEWAY_SERVICE" gateway
+          curl --fail --silent --show-error "$PUBLIC_BASE_URL/health" >/tmp/health.json
           python3 scripts/smoke_e2e.py
-
-      - name: Rollback on failure (staging)
-        if: failure() && steps.cfg.outputs.configured == 'true'
+      - name: Roll back failed deployment
+        if: failure() && steps.deploy.outputs.previous_app != '' && steps.deploy.outputs.previous_gateway != ''
         run: |
           set -euo pipefail
-          echo "receipt=rollback_executed" 
-          echo "Rolling back staging to previous image..."
-          # Operator action: docker compose -f docker-compose.prod.yml up -d --no-deps --force-recreate web
-          # or: kubectl rollout undo deployment/xray-web -n staging
-          if [ -n "${{ vars.STAGING_ROLLBACK_CMD }}" ]; then
-            eval "${{ vars.STAGING_ROLLBACK_CMD }}"
-          else
-            echo "STAGING_ROLLBACK_CMD not set — operator must complete rollback manually."
-          fi
-          exit 1
-
+          aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_APP_SERVICE" --task-definition "${{ steps.deploy.outputs.previous_app }}" --force-new-deployment
+          aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_GATEWAY_SERVICE" --task-definition "${{ steps.deploy.outputs.previous_gateway }}" --force-new-deployment
+          aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_APP_SERVICE" "$ECS_GATEWAY_SERVICE"
       - name: Deployment receipt
-        id: receipt
         if: always()
         run: |
-          set -euo pipefail
-          if [ "${{ steps.cfg.outputs.configured }}" != "true" ]; then
-            echo "deployment_status=deployment_skipped" >> "$GITHUB_OUTPUT"
-            echo "staging_url=" >> "$GITHUB_OUTPUT"
-            echo "RECEIPT: deployment_skipped (STAGING_URL not configured)"
-            echo "This job reports skip, not success. No staging environment was deployed."
-            # Exit 0 so the workflow can still build images; status is explicit.
-            exit 0
-          fi
-          if [ "${{ steps.health.outputs.healthy }}" = "true" ]; then
-            echo "deployment_status=deployment_succeeded" >> "$GITHUB_OUTPUT"
-            echo "staging_url=${{ steps.cfg.outputs.staging_url }}" >> "$GITHUB_OUTPUT"
-            echo "RECEIPT: deployment_succeeded"
-            exit 0
-          fi
-          echo "deployment_status=deployment_attempted_failed" >> "$GITHUB_OUTPUT"
-          echo "staging_url=${{ steps.cfg.outputs.staging_url }}" >> "$GITHUB_OUTPUT"
-          echo "RECEIPT: deployment_attempted_failed"
-          exit 1
-
-  # ---------------------------------------------------------------------------
-  # Deploy to production — requires protected-environment approval.
-  # Health checks NEVER use continue-on-error.
-  # ---------------------------------------------------------------------------
-  deploy-production:
-    name: Deploy to production
-    needs: [build, deploy-staging]
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production'
-    runs-on: ubuntu-latest
-    environment:
-      name: production
-      url: ${{ steps.deploy.outputs.production_url }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Require real production URL
-        id: cfg
-        env:
-          PRODUCTION_URL: ${{ vars.PRODUCTION_URL }}
-        run: |
-          set -euo pipefail
-          if [ -z "${PRODUCTION_URL:-}" ]; then
-            echo "PRODUCTION_URL is not configured — refusing production deploy"
-            exit 1
-          fi
-          echo "production_url=${PRODUCTION_URL}" >> "$GITHUB_OUTPUT"
-
-      - name: Deploy to production
-        id: deploy
-        env:
-          PRODUCTION_DEPLOY_CMD: ${{ vars.PRODUCTION_DEPLOY_CMD }}
-          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build.outputs.image_tag }}
-        run: |
-          set -euo pipefail
-          echo "Deploying image ${IMAGE} to production"
-          if [ -n "${PRODUCTION_DEPLOY_CMD:-}" ]; then
-            eval "${PRODUCTION_DEPLOY_CMD}"
-          else
-            echo "PRODUCTION_DEPLOY_CMD not set; assuming external CD has pulled ${IMAGE}"
-          fi
-          echo "production_url=${{ steps.cfg.outputs.production_url }}" >> "$GITHUB_OUTPUT"
-
-      - name: Health check (production) — fail closed
-        env:
-          HEALTH_URL: ${{ steps.cfg.outputs.production_url }}/health
-        run: |
-          set -euo pipefail
-          echo "Polling ${HEALTH_URL} ..."
-          for i in $(seq 1 30); do
-            STATUS=$(curl -s -o /dev/null -w '%{http_code}' "${HEALTH_URL}" || echo "000")
-            if [ "$STATUS" = "200" ]; then
-              echo "Health check passed (HTTP 200) after ${i} attempt(s)"
-              exit 0
-            fi
-            echo "Attempt ${i}/30: HTTP ${STATUS}, retrying in 5s..."
-            sleep 5
-          done
-          echo "ERROR: Health check failed after 30 attempts"
-          exit 1
-
-      - name: Verify audit chain (production)
-        env:
-          DB_PATH: ${{ secrets.PROD_DB_PATH }}
-        run: |
-          set -euo pipefail
-          if [ -z "${DB_PATH:-}" ]; then
-            echo "PROD_DB_PATH secret not set — skipping local file audit; operator must verify via managed path"
-            exit 0
-          fi
-          python3 scripts/verify_audit.py "${DB_PATH}"
-
-      - name: Rollback on failure (production)
-        if: failure()
-        run: |
-          set -euo pipefail
-          echo "receipt=rollback_executed"
-          echo "ROLLING BACK PRODUCTION to previous image..."
-          if [ -n "${{ vars.PRODUCTION_ROLLBACK_CMD }}" ]; then
-            eval "${{ vars.PRODUCTION_ROLLBACK_CMD }}"
-          else
-            echo "PRODUCTION_ROLLBACK_CMD not set — operator MUST complete rollback manually."
-          fi
-          exit 1
+          jq -n --arg sha "$EXPECTED_SHA" --arg digest "$IMAGE_DIGEST" --arg environment "${{ inputs.environment }}" --arg run "$GITHUB_RUN_ID" '{git_sha:$sha,image_digest:$digest,environment:$environment,workflow_run:$run}' | tee deployment-receipt.json
+          sha256sum deployment-receipt.json | tee -a "$GITHUB_STEP_SUMMARY"

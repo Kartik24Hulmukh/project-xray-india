@@ -2,38 +2,61 @@
 
 **What was promised. What changed. What was built. Show the evidence.**
 
-Open-source public-infrastructure evidence and implementation-integrity engine for India.
+Open-source evidence-workflow reference for Indian public-infrastructure research.
 
-**Release planning date:** 12 July 2026 (Asia/Kolkata)
-**Release:** v0.4.1 (production-capable public beta).
-**Repository status:** hardened public-beta reference implementation. Code-level gates are green; operator/environment production gates remain explicitly blocked in `docs/IMPLEMENTATION_AUDIT.md` and `docs/PRODUCTION_DEPLOYMENT.md`.
-**Licence:** Apache-2.0.
+| Field | Value |
+|---|---|
+| Preview mode | **Controlled synthetic technical preview** |
+| Code package | v0.4.1 with production-capable control paths |
+| Operator readiness ledger | `controlled_synthetic_preview` / alpha gates in `ops/production-readiness.yaml` |
+| Package tag | `v0.4.1-synthetic-preview` |
+| Licence | Apache-2.0 |
 
 ## Honest scope
 
-Project X-Ray does **not** determine whether a person or organization is corrupt, move public funds, replace PFMS/GeM/PAIMANA, or treat news reports as proof. It creates source-linked project dossiers, classifies claims, records missing evidence, compares project events, and generates review/RTI material for human investigation.
+Project X-Ray helps humans assemble **source-linked dossiers**, record missing evidence, run **two-person review**, and export review/RTI material.
+
+It does **not**:
+
+- determine corruption, guilt, intent, legality, or fitness for office;
+- move public funds or replace PFMS/GeM/PAIMANA;
+- treat news reports as proof;
+- authorize real-case publication merely because the software runs.
+
+## Monday 20 July 2026 launch mode
+
+**GO: controlled synthetic technical preview** for invited evaluators.
+
+- Synthetic data only
+- No real-person/project allegations
+- No traction/impact claims
+- Kill switch required before any hosted surface
+
+Read:
+
+1. `docs/KNOWN_LIMITATIONS.md`
+2. `docs/launch/POSITIONING.md`
+3. `docs/launch/GO_NO_GO.md`
+4. `docs/launch/FOUNDERS_COUNCIL_VERDICT.md`
+5. `docs/legal/DISCLAIMER.md`
+6. `docs/ops/KILL_SWITCH_RUNBOOK.md`
+7. `docs/SYNTHETIC_PREVIEW.md`
 
 ## What works in this package
 
-- Create and list public-infrastructure projects.
-- Add source-linked candidate claims with explicit evidence states.
-- Require two distinct reviewers before claim publication and after corrections.
-- Register document/evidence records with SHA-256 hashes and quarantine state.
-- Record missing required documents.
-- Publish authority responses beside allegations.
-- Generate a downloadable evidence report and draft RTI request.
-- SQLite persistence and database initialization.
-- JSON API and responsive public dashboard.
-- Race-safe `BEGIN IMMEDIATE` publication, correction and review transitions.
-- Expiring, revocable and rotatable credentials stored only as peppered digests.
-- Production OIDC/MFA gateway assertions with freshness and HMAC verification.
-- Idempotency/replay protection for writes and version-bound two-person review.
-- Externally keyed audit checkpoints that detect database-chain forks.
-- Fail-closed document quarantine with a separate scanner role.
-- Signed managed-storage verification, monitoring webhooks and recovery evidence.
-- Authenticated backup manifests, atomic migrations and restart/restore smoke path.
-- Unit tests, browser acceptance checks, release checks, reproducible SBOM/checksums, Docker image and CI templates.
-- Downloadable evidence capsules with deterministic hashes and a local verifier CLI.
+- Create and list projects
+- Source-linked candidate claims with explicit evidence states
+- Two distinct reviewers before publication and after corrections
+- Document metadata with SHA-256 and quarantine state
+- Missing-document gaps and authority responses
+- Evidence report and draft RTI output
+- SQLite local path and PostgreSQL schema/runtime path
+- JSON API and public dashboard
+- Race-safe review/publish transitions
+- Production-oriented OIDC gateway assertion verification paths
+- Fail-closed quarantine with separate scanner role
+- Audit checkpoints, backup/restore tooling, capsule export/verify
+- Unit tests, browser acceptance, smoke and release checks
 
 ## Quick start
 
@@ -45,41 +68,31 @@ python3 app/server.py
 # open http://localhost:8080
 ```
 
-Run tests:
+Run verification:
 
 ```bash
 python3 -m unittest discover -s tests -v
 python3 scripts/check_release.py
 python3 scripts/smoke_e2e.py
 python3 scripts/rehearse_production.py
+python3 scripts/external_evaluator.py
 python3 scripts/verify_capsule.py capsule.json
-# Production contract and required evidence:
-# docs/PRODUCTION_DEPLOYMENT.md
 ```
 
-Run with Docker:
+Docker:
 
 ```bash
 docker compose up --build
 ```
 
-## First production deployment gate
+## Production and deployment
 
-Do not publish as “production ready” merely because it runs. All `P0` gates in `docs/PRODUCTION_READINESS.md` must pass on the target deployment, including independent factual review of every published case, HTTPS, backups, incident ownership, privacy review, abuse handling and recovery testing.
+Do not label a deployment production-ready merely because it boots. Target gates live in:
 
-## Start here
-
-1. `AGENTS.md` — rules for Codex/GPT coding agents.
-2. `docs/ROADMAP_72_HOURS.md` — hour-by-hour plan.
-3. `docs/ACCEPTANCE_CRITERIA.md` — non-negotiable definition of done.
-4. `docs/PRD.md` — users, scope and product requirements.
-5. `docs/EVIDENCE_POLICY.md` — publication and claim-safety rules.
-6. `docs/PRODUCTION_READINESS.md` — release gate.
-7. `docs/LAUNCH_AND_IMPACT.md` — traction and impact plan.
-
-## Architecture
-
-The supplied app is intentionally dependency-light so it runs offline and gives Codex a stable reference. During the sprint, Codex may migrate the service to FastAPI/PostgreSQL and the UI to Next.js only if the existing vertical slice remains green and the migration passes the same contract tests.
+- `docs/PRODUCTION_READINESS.md`
+- `docs/PRODUCTION_DEPLOYMENT.md`
+- `ops/production-readiness.yaml`
+- `docs/roadmap/GUMLOOP_AWS_NEXT_STEPS.md`
 
 ## No-fake-claims rule
 
@@ -87,4 +100,13 @@ The supplied app is intentionally dependency-light so it runs offline and gives 
 - “Not found” means “not located in searched sources,” never “does not exist.”
 - An official statement is an official claim, not independent verification.
 - A risk indicator is a review prompt, not evidence of corruption.
-- No case may be public until two-person source review passes.
+- No real case may be public until two-person source review and operator legal/editorial gates pass.
+
+## Start here
+
+1. `AGENTS.md`
+2. `docs/SYNTHETIC_PREVIEW.md`
+3. `docs/ACCEPTANCE_CRITERIA.md`
+4. `docs/EVIDENCE_POLICY.md`
+5. `docs/metrics/TRACTION_DEFINITIONS.md`
+6. `docs/roadmap/MONDAY_TO_90_DAY_ROADMAP.md`

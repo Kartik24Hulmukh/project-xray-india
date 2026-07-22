@@ -57,6 +57,15 @@ class TestCore(unittest.TestCase):
         TMP.cleanup()
 
     def setUp(self):
+        for name in (
+            'DISABLE_WRITES',
+            'DISABLE_UPLOADS',
+            'DISABLE_PUBLICATION',
+            'READ_ONLY_MODE',
+            'MAINTENANCE_MODE',
+            'DISABLE_PUBLIC_READS',
+        ):
+            os.environ.pop(name, None)
         with server._RATE_LOCK:
             server.RATE.clear()
         server.TRUST_PROXY_HEADERS = False
@@ -414,6 +423,78 @@ class TestCore(unittest.TestCase):
     def test_health_and_ready(self):
         self.assertEqual(self.req('/health')[0], 200)
         self.assertEqual(self.req('/ready')[0], 200)
+
+    def test_read_only_mode_blocks_writes_but_keeps_public_reads(self):
+        os.environ['READ_ONLY_MODE'] = 'true'
+        status, body, headers = self.req(
+            '/api/projects',
+            'POST',
+            {'title': 'Must not be created', 'synthetic': True},
+            'test-admin-secret-long-enough',
+        )
+        self.assertEqual(status, 503)
+        self.assertEqual(body['code'], 'capability_temporarily_unavailable')
+        self.assertEqual(headers.get('Retry-After'), '60')
+        self.assertEqual(self.req('/api/projects')[0], 200)
+        ready_status, ready, _ = self.req('/ready')
+        self.assertEqual(ready_status, 200)
+        self.assertEqual(ready['status'], 'degraded')
+        self.assertFalse(ready['capabilities']['writes'])
+
+    def test_disable_publication_does_not_block_candidate_work(self):
+        pid, _, cid = self.create_project_source_claim()
+        self.req(f'/api/projects/{pid}/claims/{cid}/reviews', 'POST', {'decision': 'approve'}, 'review-token-a')
+        self.req(f'/api/projects/{pid}/claims/{cid}/reviews', 'POST', {'decision': 'approve'}, 'review-token-b')
+        os.environ['DISABLE_PUBLICATION'] = 'true'
+        self.assertEqual(
+            self.req(
+                f'/api/projects/{pid}/claims/{cid}/publish',
+                'POST',
+                {},
+                'test-admin-secret-long-enough',
+            )[0],
+            503,
+        )
+
+    def test_disable_uploads_blocks_document_registration_only(self):
+        pid, source_id, _ = self.create_project_source_claim()
+        os.environ['DISABLE_UPLOADS'] = 'true'
+        status, _, _ = self.req(
+            f'/api/projects/{pid}/documents',
+            'POST',
+            {
+                'source_id': source_id,
+                'filename': 'synthetic.pdf',
+                'media_type': 'application/pdf',
+                'size_bytes': 1,
+                'sha256': 'b' * 64,
+            },
+            'test-admin-secret-long-enough',
+        )
+        self.assertEqual(status, 503)
+        status, _, _ = self.req(
+            f'/api/projects/{pid}/gaps',
+            'POST',
+            {'document_name': 'Synthetic record', 'search_scope': 'Synthetic source set'},
+            'test-admin-secret-long-enough',
+        )
+        self.assertEqual(status, 201)
+
+    def test_disable_public_reads_allows_authenticated_private_read(self):
+        os.environ['DISABLE_PUBLIC_READS'] = 'true'
+        self.assertEqual(self.req('/api/projects')[0], 503)
+        self.assertEqual(
+            self.req('/api/projects?include_private=1', token='test-admin-secret-long-enough')[0],
+            200,
+        )
+
+    def test_maintenance_keeps_health_live_and_readiness_not_ready(self):
+        os.environ['MAINTENANCE_MODE'] = 'true'
+        self.assertEqual(self.req('/health')[0], 200)
+        ready_status, ready, _ = self.req('/ready')
+        self.assertEqual(ready_status, 503)
+        self.assertFalse(ready['ready'])
+        self.assertEqual(self.req('/api/projects')[0], 503)
 
 
 if __name__ == '__main__':

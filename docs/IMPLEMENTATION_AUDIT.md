@@ -1,4 +1,4 @@
-# Implementation audit — v0.3
+# Implementation audit — v0.4.1 / v0.4.1-synthetic-preview
 
 ## Verified backend implementation
 
@@ -26,4 +26,9 @@ The original archive checksum matched the supplied SHA-256. The v0.3 hardening l
 
 ## Production label
 
-The code now contains production control paths and fails startup when required production configuration is absent. A real deployment is not certified merely by source tests. The operator must still supply receipts proving the configured IdP enforces MFA, the managed bucket is encrypted and retained correctly, a signed alert reached a named on-call human, target-environment recovery met RPO/RTO, and real dossiers passed independent editorial/legal review. Until those receipts are recorded in `ops/production-readiness.yaml`, the honest release label remains **production-capable public beta**, not certified v1 production.
+The code now contains production control paths and fails startup when required production configuration is absent. A real deployment is not certified merely by source tests. The operator must still supply receipts proving the configured IdP enforces MFA, the managed bucket is encrypted and retained correctly, a signed alert reached a named on-call human, target-environment recovery met RPO/RTO, and real dossiers passed independent editorial/legal review. Until those receipts are recorded in `ops/production-readiness.yaml`, the honest operator-facing release label remains **controlled synthetic technical preview / alpha readiness ledger**, even though the code package contains production-capable control paths. It is not certified v1 production.
+
+
+## Package finalization note
+
+On 2026-07-17T23:08:56Z, a founders-council packaging pass added launch positioning, legal drafts, kill-switch runbook, stakeholder matrix, traction metric definitions, external evaluator, and Monday go/no-go templates. No target-environment gate was auto-marked passed by packaging alone.
