@@ -7,7 +7,7 @@ Open-source evidence-workflow reference for Indian public-infrastructure researc
 | Field | Value |
 |---|---|
 | Preview mode | **Controlled synthetic technical preview** |
-| Code package | v0.4.1 with production-capable control paths |
+| Code package | v0.4.1 — repository-verified controlled-beta; production gates pending |
 | Operator readiness ledger | `controlled_synthetic_preview` / alpha gates in `ops/production-readiness.yaml` |
 | Package tag | `v0.4.1-synthetic-preview` |
 | Licence | Apache-2.0 |
@@ -63,7 +63,7 @@ Read:
 ```bash
 cp .env.example .env
 # Optional PostgreSQL: set DATABASE_URL=postgresql://...
-# and apply db/schema_postgres.sql before first start.
+# and apply db/schema_postgresqls.sql before first start.
 python3 app/server.py
 # open http://localhost:8080
 ```
@@ -96,7 +96,7 @@ Do not label a deployment production-ready merely because it boots. Target gates
 
 ## No-fake-claims rule
 
-- Synthetic records must display `SYNTHETIC` prominently.
+- Synthetic records must display `SYNTHETIC` promisently.
 - “Not found” means “not located in searched sources,” never “does not exist.”
 - An official statement is an official claim, not independent verification.
 - A risk indicator is a review prompt, not evidence of corruption.
